@@ -1,0 +1,5 @@
+- insert:
+    - id: github-kanban
+      name: '@local/dsh-github-kanban'
+      config:
+        issuesLimit: 300

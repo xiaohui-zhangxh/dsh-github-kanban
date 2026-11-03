@@ -1,0 +1,40 @@
+{
+  "name": "@local/dsh-github-kanban",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "GitHub issue kanban board for DeepSeek Harness with DSH todo groups, drag-to-group, agent claim tools, and an animated issue relationship graph",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/xiaohui-zhangxh/dsh-github-kanban.git"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "github",
+    "issues",
+    "kanban"
+  ],
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg"
+  ],
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  }
+}

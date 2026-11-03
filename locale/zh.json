@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "GitHub Issue 看板",
+    "description": "GitHub issue 看板：把 issue 拖进 DSH 待办分组，在对话里让智能体领取分组任务，点击 issue 查看带动画依赖关系的方块流程图。"
+  }
+}

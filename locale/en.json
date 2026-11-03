@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "GitHub Issue Kanban",
+    "description": "A GitHub issue kanban board: drag issues into DSH todo groups, let the agent claim grouped tasks in chat, and inspect animated issue dependency graphs."
+  }
+}
