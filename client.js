@@ -68,6 +68,7 @@ window.__ModuleLoader__.load({
       'detail.zoom': '放大',
       'detail.shrink': '缩小还原',
       'detail.zoomHint': '上层放大显示；点击节点可切换 issue',
+      'detail.loadingIssue': '正在读取 issue…',
       'detail.truncated': '关联过多，仅显示部分邻居。',
       'detail.graphError': '关联关系加载失败',
       'detail.added': '已加入分组',
@@ -153,6 +154,7 @@ window.__ModuleLoader__.load({
       'detail.zoom': 'Enlarge',
       'detail.shrink': 'Restore',
       'detail.zoomHint': 'Shown enlarged above the board; click a node to switch issues',
+      'detail.loadingIssue': 'Loading issue…',
       'detail.truncated': 'Too many relations; only some neighbours are shown.',
       'detail.graphError': 'Failed to load relationships',
       'detail.added': 'Added to the group',
@@ -409,8 +411,15 @@ window.__ModuleLoader__.load({
         border: 1px solid var(--dsw-alias-state-success-primary); color: var(--dsw-alias-state-success-primary); }
       .gkb-pill[data-state="CLOSED"] { border-color: var(--dsw-alias-state-idle-primary);
         color: var(--dsw-alias-label-secondary); }
-      .gkb-detail-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 12px; display: flex;
-        flex-direction: column; gap: 12px; }
+      .gkb-detail-body { position: relative; flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 12px;
+        display: flex; flex-direction: column; gap: 12px; }
+      .gkb-detail-mask, .gkb-rel-zoom-mask { position: absolute; inset: 0; z-index: 6; display: flex;
+        flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+        background: var(--dsw-alias-bg-layer-1); font-size: 12px; color: var(--dsw-alias-label-secondary); }
+      .gkb-rel-zoom-mask { border-radius: 10px; }
+      .gkb-spinner { width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--dsw-alias-border-l2);
+        border-top-color: var(--dsw-alias-brand-primary); animation: gkb-spin .8s linear infinite; }
+      @keyframes gkb-spin { to { transform: rotate(360deg); } }
       .gkb-detail-title { margin: 0; font-size: 14px; line-height: 20px; font-weight: 600;
         word-break: break-word; }
       .gkb-detail-meta { display: flex; flex-wrap: wrap; gap: 8px; font-size: 11px;
@@ -432,8 +441,8 @@ window.__ModuleLoader__.load({
       .gkb-rel-zoom-head { flex: none; display: flex; align-items: center; gap: 8px; }
       .gkb-rel-zoom-title { font-size: 13px; font-weight: 600; color: var(--dsw-alias-label-primary); }
       .gkb-rel-zoom-hint { font-size: 10.5px; color: var(--dsw-alias-label-secondary); }
-      .gkb-rel-zoom-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column;
-        gap: 8px; overflow: hidden; }
+      .gkb-rel-zoom-body { position: relative; flex: 1 1 auto; min-height: 0; display: flex;
+        flex-direction: column; gap: 8px; overflow: hidden; }
       .gkb-rel-zoom-graph { flex: 1 1 auto; min-height: 0; display: flex; align-items: center;
         justify-content: center; overflow: auto; }
       .gkb-rel-zoom-graph .gkb-graph-svg { width: 100%; height: 100%; max-height: 100%; }
@@ -523,6 +532,7 @@ window.__ModuleLoader__.load({
       @media (prefers-reduced-motion: reduce) {
         .gkb-edge-line, .gkb-legend-dash, .gkb-sk-bar, .gkb-sk-block { animation: none; }
         .gkb-detail, .gkb-detail[data-open="true"] { transition: none; }
+        .gkb-spinner { animation: none; }
       }
       ${MARKDOWN_CSS}
     `
@@ -845,6 +855,35 @@ window.__ModuleLoader__.load({
       if (blocks.length === 0) return null
       const className = 'gkb-md' + (typeof extraClassName === 'string' && extraClassName !== '' ? ' ' + extraClassName : '')
       return h('div', { className }, renderMarkdownBlocks(blocks, 'md'))
+    }
+
+    const GRAPH_BASE_WIDTH = 620
+
+    function graphScaleForWidth(width) {
+      if (typeof width !== 'number' || Number.isFinite(width) === false || width <= 0) return 1
+      return Math.min(1.7, Math.max(0.85, width / GRAPH_BASE_WIDTH))
+    }
+
+    function useContainerWidth(ref, active) {
+      const [width, setWidth] = useState(0)
+      useEffect(() => {
+        if (active === false) return undefined
+        const element = ref.current
+        if (element === null || element === undefined) return undefined
+        const measure = () => setWidth(element.clientWidth || 0)
+        measure()
+        if (typeof ResizeObserver === 'function') {
+          const observer = new ResizeObserver(measure)
+          observer.observe(element)
+          return () => observer.disconnect()
+        }
+        if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+          window.addEventListener('resize', measure)
+          return () => window.removeEventListener('resize', measure)
+        }
+        return undefined
+      }, [ref, active])
+      return width
     }
 
     function toNumber(value) {
@@ -1313,8 +1352,14 @@ window.__ModuleLoader__.load({
       return { d, midX, midY }
     }
 
-    function computeGraphLayout(data) {
+    function computeGraphLayout(data, scaleOption) {
       try {
+        const scale = typeof scaleOption === 'number' && Number.isFinite(scaleOption) && scaleOption > 0 ? scaleOption : 1
+        const focusW = GRAPH_FOCUS.w * scale
+        const focusH = GRAPH_FOCUS.h * scale
+        const nodeW = GRAPH_NODE.w * scale
+        const nodeH = GRAPH_NODE.h * scale
+        const pad = GRAPH_PAD * scale
         if (!data || typeof data !== 'object' || Array.isArray(data)) return null
         const focusNumber = toNumber(data.focus)
         if (focusNumber === null) return null
@@ -1399,16 +1444,16 @@ window.__ModuleLoader__.load({
         }
 
         const positions = new Map()
-        positions.set(focusNumber, { cx: 0, cy: 0, w: GRAPH_FOCUS.w, h: GRAPH_FOCUS.h, focus: true })
+        positions.set(focusNumber, { cx: 0, cy: 0, w: focusW, h: focusH, focus: true })
         // Lay neighbours out in small grids instead of a single tall column so
         // the picture stays wide and fits the detail panel without scrolling.
-        const rowGap = 30
-        const rowStep = GRAPH_NODE.h + 14
-        const colStep = GRAPH_NODE.w + 16
+        const rowGap = 30 * scale
+        const rowStep = nodeH + 14 * scale
+        const colStep = nodeW + 16 * scale
         const gridColumns = (count) => (count <= 2 ? Math.max(1, count) : 3)
         const gridHeight = (count, columns) => {
           const rows = Math.max(1, Math.ceil(count / columns))
-          return rows * GRAPH_NODE.h + (rows - 1) * 14
+          return rows * nodeH + (rows - 1) * 14 * scale
         }
         const placeGrid = (list, topY, columns) => {
           const count = list.length
@@ -1418,9 +1463,9 @@ window.__ModuleLoader__.load({
             const inRow = Math.min(columns, count - row * columns)
             positions.set(list[index].number, {
               cx: (column - (inRow - 1) / 2) * colStep,
-              cy: topY + row * rowStep + GRAPH_NODE.h / 2,
-              w: GRAPH_NODE.w,
-              h: GRAPH_NODE.h,
+              cy: topY + row * rowStep + nodeH / 2,
+              w: nodeW,
+              h: nodeH,
               focus: false,
             })
           }
@@ -1428,33 +1473,33 @@ window.__ModuleLoader__.load({
         const parentColumns = gridColumns(pools.parent.length)
         const parentHeight = pools.parent.length === 0 ? 0 : gridHeight(pools.parent.length, parentColumns)
         if (pools.parent.length > 0) {
-          placeGrid(pools.parent, -((GRAPH_FOCUS.h / 2) + rowGap + parentHeight), parentColumns)
+          placeGrid(pools.parent, -((focusH / 2) + rowGap + parentHeight), parentColumns)
         }
         const childColumns = gridColumns(pools.child.length)
         const childHeight = pools.child.length === 0 ? 0 : gridHeight(pools.child.length, childColumns)
         if (pools.child.length > 0) {
-          placeGrid(pools.child, (GRAPH_FOCUS.h / 2) + rowGap, childColumns)
+          placeGrid(pools.child, (focusH / 2) + rowGap, childColumns)
         }
 
-        const sideX = (GRAPH_FOCUS.w / 2) + 24 + (GRAPH_NODE.w / 2)
+        const sideX = (focusW / 2) + 24 * scale + (nodeW / 2)
         const placeColumn = (list, cx) => {
           const count = list.length
           for (let index = 0; index < count; index += 1) {
             const cy = (index - (count - 1) / 2) * rowStep
-            positions.set(list[index].number, { cx, cy, w: GRAPH_NODE.w, h: GRAPH_NODE.h, focus: false })
+            positions.set(list[index].number, { cx, cy, w: nodeW, h: nodeH, focus: false })
           }
         }
         placeColumn(pools.blocker, -sideX)
         placeColumn(pools.blocked, sideX)
 
         const stackSpan = (count) => (
-          (count <= 1 ? 0 : ((count - 1) / 2) * rowStep) + (GRAPH_NODE.h / 2)
+          (count <= 1 ? 0 : ((count - 1) / 2) * rowStep) + (nodeH / 2)
         )
         const relatedColumns = gridColumns(pools.related.length)
         const relatedTop = Math.max(
-          (GRAPH_FOCUS.h / 2) + rowGap + childHeight + (pools.child.length > 0 ? 22 : 0),
-          stackSpan(pools.blocker.length) + 22,
-          stackSpan(pools.blocked.length) + 22,
+          (focusH / 2) + rowGap + childHeight + (pools.child.length > 0 ? 22 * scale : 0),
+          stackSpan(pools.blocker.length) + 22 * scale,
+          stackSpan(pools.blocked.length) + 22 * scale,
         )
         if (pools.related.length > 0) placeGrid(pools.related, relatedTop, relatedColumns)
 
@@ -1509,11 +1554,11 @@ window.__ModuleLoader__.load({
           })
         }
 
-        const width = Math.max(260, round1(maxX - minX + GRAPH_PAD * 2))
-        const height = Math.max(150, round1(maxY - minY + GRAPH_PAD * 2))
+        const width = Math.max(260 * scale, round1(maxX - minX + pad * 2))
+        const height = Math.max(150 * scale, round1(maxY - minY + pad * 2))
         const viewBox = [
-          round1(minX - GRAPH_PAD),
-          round1(minY - GRAPH_PAD),
+          round1(minX - pad),
+          round1(minY - pad),
           width,
           height,
         ].join(' ')
@@ -1778,6 +1823,7 @@ window.__ModuleLoader__.load({
       const uid = uidRef.current
       const onSelectIssue = typeof props.onSelectIssue === 'function' ? props.onSelectIssue : null
       const groupMarks = props.groupMarks instanceof Map ? props.groupMarks : null
+      const scale = typeof props.scale === 'number' && Number.isFinite(props.scale) && props.scale > 0 ? props.scale : 1
       if (!layout || !Array.isArray(layout.nodes) || layout.nodes.length === 0) return null
       const edges = Array.isArray(layout.edges) ? layout.edges : []
       const nodes = layout.nodes
@@ -1796,8 +1842,9 @@ window.__ModuleLoader__.load({
           edge.kind === 'relates' ? null : h('text', {
             className: 'gkb-edge-label',
             x: round1(edge.midX),
-            y: round1(edge.midY - 5),
+            y: round1(edge.midY - 5 * scale),
             'textAnchor': 'middle',
+            style: { fontSize: 9 * scale + 'px' },
           }, edgeLabel(t, edge)))
       })
 
@@ -1805,17 +1852,17 @@ window.__ModuleLoader__.load({
         const w = node.w
         const hh = node.h
         const badge = '#' + node.number
-        const badgeWidth = 14 + badge.length * (node.focus ? 6.6 : 6)
-        const badgeY = -hh / 2 + (node.focus ? 7 : 6)
-        const badgeH = node.focus ? 15 : 14
+        const badgeWidth = (14 + badge.length * (node.focus ? 6.6 : 6)) * scale
+        const badgeY = -hh / 2 + (node.focus ? 7 : 6) * scale
+        const badgeH = (node.focus ? 15 : 14) * scale
         const lines = wrapSvgTitle(
           node.title !== '' ? node.title : badge,
-          w - 22,
-          node.focus ? 12 : 11,
+          w - 22 * scale,
+          (node.focus ? 12 : 11) * scale,
           3,
         )
-        const titleStart = 4
-        const lineHeight = node.focus ? 13 : 12
+        const titleStart = 4 * scale
+        const lineHeight = (node.focus ? 13 : 12) * scale
         const interactive = !node.focus && onSelectIssue !== null
         const rect = h('rect', {
           className: 'gkb-gnode-rect',
@@ -1823,45 +1870,47 @@ window.__ModuleLoader__.load({
           y: -hh / 2,
           width: w,
           height: hh,
-          rx: 9,
+          rx: 9 * scale,
         })
         const badgeRect = h('rect', {
           className: 'gkb-gnode-badge',
-          x: -w / 2 + 9,
+          x: -w / 2 + 9 * scale,
           y: badgeY,
           width: badgeWidth,
           height: badgeH,
-          rx: 4,
+          rx: 4 * scale,
         })
         const numberText = h('text', {
           className: 'gkb-gnode-num',
-          x: -w / 2 + 9 + badgeWidth / 2,
-          y: badgeY + badgeH - 4,
+          x: -w / 2 + 9 * scale + badgeWidth / 2,
+          y: badgeY + badgeH - 4 * scale,
           textAnchor: 'middle',
+          style: { fontSize: 9 * scale + 'px' },
         }, badge)
         const stateDot = h('circle', {
           className: 'gkb-gnode-dot',
           'data-state': node.state === 'CLOSED' ? 'CLOSED' : 'OPEN',
-          cx: w / 2 - 11,
+          cx: w / 2 - 11 * scale,
           cy: badgeY + badgeH / 2,
-          r: 3,
+          r: 3 * scale,
         })
         const stateText = h('text', {
           className: 'gkb-gnode-state-text',
-          x: w / 2 - 17,
-          y: badgeY + badgeH - 4,
+          x: w / 2 - 17 * scale,
+          y: badgeY + badgeH - 4 * scale,
           textAnchor: 'end',
+          style: { fontSize: 8 * scale + 'px' },
         }, node.state === 'CLOSED' ? t('relation.finished') : t('relation.unfinished'))
         const mark = groupMarks !== null ? groupMarks.get(node.number) : undefined
         const accent = mark === undefined
           ? null
           : h('rect', {
             className: 'gkb-gnode-accent',
-            x: -w / 2 + 2.5,
-            y: -hh / 2 + 9,
-            width: 3,
-            height: hh - 18,
-            rx: 1.5,
+            x: -w / 2 + 2.5 * scale,
+            y: -hh / 2 + 9 * scale,
+            width: 3 * scale,
+            height: hh - 18 * scale,
+            rx: 1.5 * scale,
             fill: mark.color,
           })
         const titleText = lines.length > 0
@@ -1870,6 +1919,7 @@ window.__ModuleLoader__.load({
             x: 0,
             y: 0,
             textAnchor: 'middle',
+            style: { fontSize: (node.focus ? 11.5 : 10.5) * scale + 'px' },
           }, lines.map((line, index) => h('tspan', {
             key: index,
             x: 0,
@@ -1945,6 +1995,12 @@ window.__ModuleLoader__.load({
       const [actionError, setActionError] = useState(null)
       const cacheRef = useRef(null)
       if (cacheRef.current === null) cacheRef.current = new Map()
+      const graphBoxRef = useRef(null)
+      const zoomBoxRef = useRef(null)
+      const panelGraphWidth = useContainerWidth(graphBoxRef, graph !== null && graphLoading === false)
+      const zoomGraphWidth = useContainerWidth(zoomBoxRef, relationsZoomed && graph !== null && graphLoading === false)
+      const panelScale = graphScaleForWidth(panelGraphWidth)
+      const zoomScale = graphScaleForWidth(zoomGraphWidth)
 
       useEffect(() => {
         if (number === null) {
@@ -2000,7 +2056,8 @@ window.__ModuleLoader__.load({
         setBusy(null)
       }, [number])
 
-      const graphLayout = useMemo(() => computeGraphLayout(graph), [graph])
+      const graphLayout = useMemo(() => computeGraphLayout(graph, panelScale), [graph, panelScale])
+      const zoomLayout = useMemo(() => computeGraphLayout(graph, zoomScale), [graph, zoomScale])
       const relationsReady = graphLayout !== null && graphLayout.nodes.length > 1 && graphLayout.edges.length > 0
       // Which kanban column each related issue sits in, with the same palette
       // the board columns use. State (open/closed) is tracked separately.
@@ -2219,9 +2276,10 @@ window.__ModuleLoader__.load({
               : graphLayout === null || graphLayout.nodes.length <= 1 || graphLayout.edges.length === 0
                 ? h('div', { className: 'gkb-empty' }, t('detail.relationsEmpty'))
                 : h('div', { className: 'gkb-section' },
-                  h('div', { className: 'gkb-graph' }, h(RelationGraph, {
+                  h('div', { className: 'gkb-graph', ref: graphBoxRef }, h(RelationGraph, {
                     t,
                     layout: graphLayout,
+                    scale: panelScale,
                     groupMarks: groupMarksByIssue,
                     onSelectIssue,
                   })),
@@ -2235,7 +2293,7 @@ window.__ModuleLoader__.load({
 
       // Lifted above the whole frame: only while the relations graph has
       // content; Escape / backdrop / the restore button return to the panel.
-      const zoomOverlay = relationsZoomed && relationsReady && onZoomRelations !== null
+      const zoomOverlay = relationsZoomed && onZoomRelations !== null
         ? h('div', { className: 'gkb-rel-zoom', role: 'dialog', 'aria-modal': 'true', 'aria-label': t('detail.relations') },
           h('div', {
             className: 'gkb-rel-zoom-backdrop',
@@ -2254,14 +2312,21 @@ window.__ModuleLoader__.load({
                 onClick: () => onZoomRelations(false),
               })),
             h('div', { className: 'gkb-rel-zoom-body' },
-              h('div', { className: 'gkb-graph gkb-rel-zoom-graph' }, h(RelationGraph, {
-                t,
-                layout: graphLayout,
-                groupMarks: groupMarksByIssue,
-                onSelectIssue,
-              })),
-              legend,
-              stateLegend),
+              graphLoading
+                ? h('div', { className: 'gkb-rel-zoom-mask' },
+                  h('span', { className: 'gkb-spinner', 'aria-hidden': 'true' }),
+                  h('span', null, t('detail.loadingIssue')))
+                : zoomLayout === null
+                  ? h('div', { className: 'gkb-empty' }, t('detail.relationsEmpty'))
+                  : h('div', { className: 'gkb-graph gkb-rel-zoom-graph', ref: zoomBoxRef }, h(RelationGraph, {
+                    t,
+                    layout: zoomLayout,
+                    scale: zoomScale,
+                    groupMarks: groupMarksByIssue,
+                    onSelectIssue,
+                  })),
+              graphLoading || zoomLayout === null ? null : legend,
+              graphLoading || zoomLayout === null ? null : stateLegend),
             h('div', { className: 'gkb-rel-zoom-actions' },
               h('button', {
                 className: 'gkb-btn',
@@ -2334,12 +2399,17 @@ window.__ModuleLoader__.load({
               ? h('div', { className: 'gkb-action-error' },
                 t('action.failed') + '：' + (actionError === '' ? t('action.failed') : actionError))
               : null),
-          relationSection)
+          relationSection,
+          graphLoading
+            ? h('div', { className: 'gkb-detail-mask' },
+              h('span', { className: 'gkb-spinner', 'aria-hidden': 'true' }),
+              h('span', null, t('detail.loadingIssue')))
+            : null)
 
       return h('aside', {
         className: 'gkb-detail',
         'data-open': open ? 'true' : 'false',
-        'data-zoomed': relationsZoomed && relationsReady ? 'true' : 'false',
+        'data-zoomed': relationsZoomed ? 'true' : 'false',
         'aria-hidden': open ? 'false' : 'true',
         'aria-label': t('detail.title'),
       },
@@ -2667,6 +2737,14 @@ window.__ModuleLoader__.load({
           setPanelOpen(false)
           return
         }
+        setSelected(number)
+        setPanelOpen(true)
+      }
+
+      const openRelated = (number) => {
+        // A graph click must keep the panel (and the enlarged layer) open while
+        // the new issue's relations load; the panel shows a loading mask.
+        if (number === null) return
         setSelected(number)
         setPanelOpen(true)
       }
@@ -3254,7 +3332,7 @@ window.__ModuleLoader__.load({
               setRelationsZoomed(false)
               setPanelOpen(false)
             },
-            onSelectIssue: openIssue,
+            onSelectIssue: openRelated,
           })))
     }
 
