@@ -586,6 +586,19 @@ function runGh(args) {
     })
   })
 }
+function runGhSoft(args) {
+  return new Promise((resolve) => {
+    const binary = resolveGhBin()
+    if (binary === '') {
+      resolve({ stdout: '', error: new Error('找不到 gh CLI，请先安装 GitHub CLI 或设置 GH_BIN') })
+      return
+    }
+    const env = { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH ?? ''}` }
+    execFile(binary, args, { timeout: GH_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024, env }, (error, stdout) => {
+      resolve({ stdout: typeof stdout === 'string' ? stdout : '', error })
+    })
+  })
+}
 async function ghJson(args) {
   const stdout = await runGh(args)
   const text = typeof stdout === 'string' ? stdout.trim() : ''
@@ -626,6 +639,44 @@ function normalizeIssue(raw, repo) {
     milestone: typeof raw.milestone?.title === 'string' ? raw.milestone.title : null,
     bodyExcerpt: excerptOf(raw.body),
     subIssues: { total: Number(summary?.total) || 0, completed: Number(summary?.completed) || 0 },
+  }
+}
+async function fetchIssueNodesBatch(repo, numbers) {
+  const unique = [...new Set(numbers.filter((number) => Number.isInteger(number) && number > 0))]
+  if (unique.length === 0) return []
+  const parts = repo.split('/')
+  if (parts.length !== 2) return []
+  const fields = unique.map((number, index) => `i${index}: issue(number: ${number}) { number title state }`).join(' ')
+  const query = `query { repository(owner: "${parts[0]}", name: "${parts[1]}") { ${fields} } }`
+  try {
+    const { stdout, error } = await runGhSoft(['api', 'graphql', '-f', `query=${query}`])
+    const text = typeof stdout === 'string' ? stdout.trim() : ''
+    if (text === '') {
+      if (error !== null && error !== undefined) warn(`批量读取关联 issue 失败：${describeError(error)}`)
+      return []
+    }
+    const raw = JSON.parse(text)
+    const repository = raw?.data?.repository
+    if (repository === null || typeof repository !== 'object') {
+      if (error !== null && error !== undefined) warn(`批量读取关联 issue 失败：${describeError(error)}`)
+      return []
+    }
+    const nodes = []
+    for (let index = 0; index < unique.length; index += 1) {
+      const item = repository[`i${index}`]
+      if (item === null || typeof item !== 'object') continue
+      nodes.push({
+        number: Number(item.number) || unique[index],
+        title: typeof item.title === 'string' ? item.title : '',
+        state: String(item.state ?? '').toUpperCase() === 'CLOSED' ? 'CLOSED' : 'OPEN',
+        html_url: `https://github.com/${repo}/issues/${unique[index]}`,
+        labels: [],
+      })
+    }
+    return nodes
+  } catch (error) {
+    warn(`批量读取关联 issue 失败，退回逐个读取：${describeError(error)}`)
+    return []
   }
 }
 async function fetchIssues(repo, limit, bodies) {
@@ -1092,9 +1143,40 @@ export function apply(ctx, config) {
       }
     }
     if (focusNode === null) throw new Error(`无法读取 issue #${focusNumber}：请确认 gh CLI 可用且该 issue 属于 ${repo}`)
-    const [parentRaw, childrenRaw] = await Promise.all([
+    // Text references are known locally, so the REST parent/sub-issue calls and
+    // one batched GraphQL lookup for referenced issues can run together.
+    const textEdges = []
+    for (const reference of textReferences(focusBody)) {
+      if (reference.kind === 'blocks') appendReference(textEdges, reference.number, focusNumber, 'blocks')
+      else if (reference.kind === 'parent') appendReference(textEdges, reference.number, focusNumber, 'parent')
+      else if (reference.kind === 'child') appendReference(textEdges, focusNumber, reference.number, 'parent')
+      else appendReference(textEdges, focusNumber, reference.number, 'relates')
+    }
+    for (const [otherNumber, body] of issueCache.bodies) {
+      if (otherNumber === focusNumber) continue
+      for (const reference of textReferences(body)) {
+        if (reference.number !== focusNumber) continue
+        if (reference.kind === 'blocks') appendReference(textEdges, focusNumber, otherNumber, 'blocks')
+        else if (reference.kind === 'parent') appendReference(textEdges, focusNumber, otherNumber, 'parent')
+        else if (reference.kind === 'child') appendReference(textEdges, otherNumber, focusNumber, 'parent')
+        else appendReference(textEdges, otherNumber, focusNumber, 'relates')
+      }
+    }
+    const textEndpoints = new Set()
+    for (const edge of textEdges) {
+      if (edge.from !== focusNumber) textEndpoints.add(edge.from)
+      if (edge.to !== focusNumber) textEndpoints.add(edge.to)
+    }
+    const cacheByNumber = issueCache.repo === repo
+      ? new Map(issueCache.issues.map((issue) => [issue.number, issue]))
+      : new Map()
+    const missing = [...textEndpoints]
+      .filter((endpoint) => !cacheByNumber.has(endpoint))
+      .slice(0, MAX_NEIGHBOURS)
+    const [parentRaw, childrenRaw, batchNodes] = await Promise.all([
       fetchRawOrNull(['api', `repos/${repo}/issues/${focusNumber}/parent`]),
       fetchRawOrNull(['api', `repos/${repo}/issues/${focusNumber}/sub_issues`]),
+      fetchIssueNodesBatch(repo, missing),
     ])
     const nodes = new Map()
     const edges = []
@@ -1113,35 +1195,22 @@ export function apply(ctx, config) {
       addNode(childNode)
       edges.push({ from: focusNumber, to: childNode.number, kind: 'parent' })
     }
-    for (const reference of textReferences(focusBody)) {
-      if (reference.kind === 'blocks') appendReference(edges, reference.number, focusNumber, 'blocks')
-      else if (reference.kind === 'parent') appendReference(edges, reference.number, focusNumber, 'parent')
-      else if (reference.kind === 'child') appendReference(edges, focusNumber, reference.number, 'parent')
-      else appendReference(edges, focusNumber, reference.number, 'relates')
-    }
-    for (const [otherNumber, body] of issueCache.bodies) {
-      if (otherNumber === focusNumber) continue
-      for (const reference of textReferences(body)) {
-        if (reference.number !== focusNumber) continue
-        if (reference.kind === 'blocks') appendReference(edges, focusNumber, otherNumber, 'blocks')
-        else if (reference.kind === 'parent') appendReference(edges, focusNumber, otherNumber, 'parent')
-        else if (reference.kind === 'child') appendReference(edges, otherNumber, focusNumber, 'parent')
-        else appendReference(edges, otherNumber, focusNumber, 'relates')
-      }
-    }
-    const endpoints = new Set()
-    for (const edge of edges) {
-      if (edge.from !== focusNumber) endpoints.add(edge.from)
-      if (edge.to !== focusNumber) endpoints.add(edge.to)
-    }
-    for (const endpoint of endpoints) {
+    for (const edge of textEdges) edges.push(edge)
+    for (const endpoint of textEndpoints) {
       if (nodes.has(endpoint)) continue
-      const cached = issueCache.repo === repo ? issueCache.issues.find((issue) => issue.number === endpoint) : undefined
+      const cached = cacheByNumber.get(endpoint)
       if (cached !== undefined) addNode(nodeFromCache(cached))
     }
-    const missing = [...endpoints].filter((endpoint) => !nodes.has(endpoint)).slice(0, MAX_NEIGHBOURS)
-    if (missing.length > 0) {
-      const raws = await Promise.all(missing.map((endpoint) => fetchRawOrNull(['api', `repos/${repo}/issues/${endpoint}`])))
+    // One GraphQL request fetched the referenced titles/states; the previous
+    // implementation spawned one `gh` process per issue (seconds on a big graph).
+    const batchByNumber = new Map(batchNodes.map((node) => [node.number, node]))
+    for (const endpoint of missing) {
+      const node = batchByNumber.get(endpoint)
+      if (node !== undefined) addNode(nodeFromRaw(node, repo))
+    }
+    const stillMissing = missing.filter((endpoint) => !nodes.has(endpoint))
+    if (stillMissing.length > 0) {
+      const raws = await Promise.all(stillMissing.map((endpoint) => fetchRawOrNull(['api', `repos/${repo}/issues/${endpoint}`])))
       for (const raw of raws) addNode(nodeFromRaw(raw, repo))
     }
     const graph = assembleGraph(focusNumber, focusNode, nodes, edges)

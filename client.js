@@ -2453,7 +2453,7 @@ window.__ModuleLoader__.load({
                 t('action.failed') + '：' + (actionError === '' ? t('action.failed') : actionError))
               : null),
           relationSection,
-          graphLoading
+          graphLoading && issue === null
             ? h('div', { className: 'gkb-detail-mask' },
               h('span', { className: 'gkb-spinner', 'aria-hidden': 'true' }),
               h('span', null, t('detail.loadingIssue')))
@@ -2472,7 +2472,7 @@ window.__ModuleLoader__.load({
           number !== null
             ? h('span', { className: 'gkb-pill', 'data-state': state }, stateLabel(t, state))
             : null),
-        revalidating
+        revalidating || graphLoading
           ? h('span', {
             className: 'gkb-spinner gkb-spinner-sm',
             role: 'status',
