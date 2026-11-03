@@ -913,6 +913,26 @@ export function apply(ctx, config) {
   // the single source for groups/tasks, so schema migrations land immediately.
   storage.saveState(state)
   let issueCache = storage.loadCache(state.repo) ?? emptyCache(state.repo)
+  // A task points at an open issue; once GitHub closes (or deletes) it, the
+  // issue disappears from the open-issue cache and the task must not linger in
+  // a kanban column. Reconcile the persisted groups against the cache on every
+  // load and after each sync.
+  function pruneClosedTasks() {
+    if (issueCache.repo === '' || issueCache.repo !== state.repo || issueCache.error !== null) return false
+    if (issueCache.truncated === true || issueCache.issues.length === 0) return false
+    const openNumbers = new Set(issueCache.issues.map((issue) => issue.number))
+    const repo = issueCache.repo
+    const kept = state.tasks.filter((task) => {
+      const taskRepo = typeof task.repo === 'string' && task.repo !== '' ? task.repo : repo
+      if (taskRepo !== repo) return true
+      return openNumbers.has(task.issueNumber)
+    })
+    if (kept.length === state.tasks.length) return false
+    state.tasks = kept
+    storage.saveState(state)
+    return true
+  }
+  pruneClosedTasks()
   let viewerLoginCache = { login: null, at: 0 }
   const relationCache = new Map()
   const sessionRepoCache = new Map()
@@ -1082,6 +1102,7 @@ export function apply(ctx, config) {
     lastSyncState = { mode: since === null ? 'full' : 'incremental', since }
     relationCache.clear()
     storage.saveCache(issueCache)
+    pruneClosedTasks()
     return issueCache
   }
   const NO_REPO_MESSAGE = '尚未选择仓库：点击看板顶部的仓库名输入 owner/name，或在插件配置里设置 repo；从带 GitHub 关联的聊天项目进入会自动识别'
