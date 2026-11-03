@@ -31,6 +31,21 @@ window.__ModuleLoader__.load({
       'panel.empty': '暂无内容',
       'inbox.title': 'GitHub 收件箱',
       'inbox.hint': '把 issue 拖进分组，即可加入 DSH 待办',
+      'filter.open': '标签筛选',
+      'filter.title': '标签筛选',
+      'filter.hint': '行内多选标签 = 或条件；行与行 = 且条件',
+      'filter.addRow': '添加条件行',
+      'filter.addLabel': '选择标签',
+      'filter.removeRow': '删除条件行',
+      'filter.removeLabel': '移除标签 {name}',
+      'filter.search': '搜索标签',
+      'filter.clear': '清空筛选',
+      'filter.close': '关闭筛选',
+      'filter.empty': '还没有筛选条件，点击「添加条件行」',
+      'filter.noLabels': '当前没有可筛选的标签',
+      'filter.noMatch': '没有符合筛选条件的 issue',
+      'filter.active': '已启用 {n} 行标签条件',
+      'filter.rows': '{n} 行',
       'group.add': '添加',
       'group.new': '新建分组',
       'group.namePlaceholder': '分组名称',
@@ -94,6 +109,21 @@ window.__ModuleLoader__.load({
       'panel.empty': 'Nothing to show',
       'inbox.title': 'GitHub inbox',
       'inbox.hint': 'Drag an issue into a group to turn it into a DSH todo',
+      'filter.open': 'Label filters',
+      'filter.title': 'Label filters',
+      'filter.hint': 'Labels inside a row are ORed; rows are ANDed',
+      'filter.addRow': 'Add condition row',
+      'filter.addLabel': 'Pick labels',
+      'filter.removeRow': 'Remove condition row',
+      'filter.removeLabel': 'Remove label {name}',
+      'filter.search': 'Search labels',
+      'filter.clear': 'Clear filters',
+      'filter.close': 'Close filters',
+      'filter.empty': 'No conditions yet — click “Add condition row”',
+      'filter.noLabels': 'No labels available',
+      'filter.noMatch': 'No issue matches the label filters',
+      'filter.active': '{n} label condition row(s) active',
+      'filter.rows': '{n} row(s)',
       'group.add': 'Add',
       'group.new': 'New group',
       'group.namePlaceholder': 'Group name',
@@ -202,6 +232,7 @@ window.__ModuleLoader__.load({
       .gkb-loading { display: flex; align-items: center; justify-content: center; height: 100%; font-size: 12px;
         color: var(--dsw-alias-label-secondary); }
       .gkb-col { flex: 0 0 280px; width: 280px; min-height: 0; display: flex; flex-direction: column;
+        position: relative;
         border-radius: 10px; border: 1px solid var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-layer-1);
         transition: border-color 120ms ease-in-out; }
       .gkb-col[data-over="true"] { border-color: var(--dsw-alias-brand-primary); background: var(--dsw-alias-bg-layer-2); }
@@ -217,6 +248,48 @@ window.__ModuleLoader__.load({
         line-height: 16px; text-align: center; font-variant-numeric: tabular-nums; }
       .gkb-col-actions { margin-left: auto; display: inline-flex; align-items: center; gap: 2px; flex: none; }
       .gkb-col-hint { flex: none; padding: 6px 10px 0; font-size: 11px; line-height: 15px;
+        color: var(--dsw-alias-label-secondary); }
+      .gkb-labelfilter { position: absolute; top: 42px; left: 6px; z-index: 40;
+        width: min(480px, calc(100vw - 120px)); max-height: min(72vh, 560px); overflow-y: auto;
+        display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: 10px;
+        border: 1px solid var(--dsw-alias-border-l2); background: var(--dsw-alias-bg-layer-1);
+        box-shadow: 0 14px 36px rgba(0, 0, 0, .24); }
+      .gkb-root[data-scheme="dark"] .gkb-labelfilter { box-shadow: 0 18px 48px rgba(0, 0, 0, .62); }
+      .gkb-filter-head { display: flex; align-items: center; gap: 8px; }
+      .gkb-filter-title { font-size: 12px; font-weight: 600; color: var(--dsw-alias-label-primary); }
+      .gkb-filter-hint { font-size: 10.5px; line-height: 14px; color: var(--dsw-alias-label-secondary); }
+      .gkb-filter-grow { flex: 1 1 auto; }
+      .gkb-filter-row { display: flex; flex-direction: column; gap: 6px; padding: 6px;
+        border-radius: 8px; border: 1px solid var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-base); }
+      .gkb-filter-row-line { display: flex; align-items: center; gap: 6px; min-width: 0; }
+      .gkb-filter-row-index { flex: none; min-width: 16px; font-size: 10px; font-variant-numeric: tabular-nums;
+        color: var(--dsw-alias-label-secondary); }
+      .gkb-filter-row-labels { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; flex: 1 1 auto; min-width: 0; }
+      .gkb-filter-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; height: 18px;
+        padding: 0 5px; border-radius: 999px; border: 1px solid var(--dsw-alias-border-l2);
+        background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary);
+        font: inherit; font-size: 10px; line-height: 16px; cursor: pointer; }
+      .gkb-filter-chip:hover { border-color: var(--dsw-alias-state-error-primary); }
+      .gkb-filter-chip:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
+      .gkb-filter-chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .gkb-filter-chip-x { color: var(--dsw-alias-label-secondary); }
+      .gkb-filter-picker { display: flex; flex-direction: column; gap: 2px; max-height: 180px; overflow-y: auto;
+        padding: 4px; border-radius: 8px; border: 1px solid var(--dsw-alias-border-l1);
+        background: var(--dsw-alias-bg-layer-2); }
+      .gkb-filter-search { width: 100%; margin-bottom: 4px; }
+      .gkb-label-option { display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0; padding: 3px 6px;
+        border: none; border-radius: 5px; background: transparent; color: var(--dsw-alias-label-primary);
+        font: inherit; font-size: 11px; text-align: left; cursor: pointer; }
+      .gkb-label-option:hover { background: var(--dsw-alias-bg-layer-1); }
+      .gkb-label-option:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: -2px; }
+      .gkb-label-option[data-on="true"] { background: var(--dsw-alias-bg-base); font-weight: 600; }
+      .gkb-label-option-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .gkb-label-option-count { margin-left: auto; flex: none; font-size: 10px; font-variant-numeric: tabular-nums;
+        color: var(--dsw-alias-label-secondary); }
+      .gkb-filter-empty { padding: 8px 6px; text-align: center; font-size: 11px;
+        color: var(--dsw-alias-label-secondary); }
+      .gkb-filter-actions { display: flex; align-items: center; gap: 6px; }
+      .gkb-filter-count { flex: none; font-size: 10px; font-variant-numeric: tabular-nums;
         color: var(--dsw-alias-label-secondary); }
       .gkb-col-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 8px; display: flex;
         flex-direction: column; gap: 8px; }
@@ -390,6 +463,7 @@ window.__ModuleLoader__.load({
       trash: 'M3.5 4.5h9M6.5 4.5V3h3v1.5M5 4.5l.6 8.5h4.8L11 4.5',
       refresh: 'M12.5 8a4.5 4.5 0 1 1-1.3-3.1M12.8 2.6v2.9h-2.9',
       external: 'M9 3.5h3.5V7M12.5 3.5L8 8M11 9v3.5H3.5V5H7',
+      filter: 'M2.5 3.5h11l-4.1 4.9v4.1l-2.8-1.3V8.4L2.5 3.5z',
     }
 
     // ------------------------------------------------------------------
@@ -465,6 +539,64 @@ window.__ModuleLoader__.load({
       if (typeof value !== 'string') return ''
       const raw = value.replace(/^#/, '').trim()
       return /^[0-9a-fA-F]{3,8}$/.test(raw) ? '#' + raw : ''
+    }
+
+    // ------------------------------------------------------------------
+    // Inbox label filters: rows are ANDed; labels inside one row are ORed.
+    // ------------------------------------------------------------------
+
+    const LABEL_FILTER_STORAGE_PREFIX = 'github-kanban.labelFilters.'
+
+    function normalizeLabelFilters(value) {
+      if (!Array.isArray(value)) return []
+      const rows = []
+      for (const row of value) {
+        if (!Array.isArray(row)) continue
+        const labels = []
+        for (const label of row) {
+          if (typeof label !== 'string') continue
+          const name = label.trim()
+          if (name === '' || labels.includes(name)) continue
+          labels.push(name)
+        }
+        if (labels.length > 0) rows.push(labels)
+        if (rows.length >= 6) break
+      }
+      return rows
+    }
+
+    function loadLabelFilters(repo) {
+      if (typeof repo !== 'string' || repo === '' || typeof localStorage === 'undefined') return []
+      try {
+        const raw = localStorage.getItem(LABEL_FILTER_STORAGE_PREFIX + repo)
+        if (raw === null || raw === '') return []
+        return normalizeLabelFilters(JSON.parse(raw))
+      } catch (reason) {
+        return []
+      }
+    }
+
+    function saveLabelFilters(repo, filters) {
+      if (typeof repo !== 'string' || repo === '' || typeof localStorage === 'undefined') return
+      try {
+        const normalized = normalizeLabelFilters(filters)
+        const key = LABEL_FILTER_STORAGE_PREFIX + repo
+        if (normalized.length === 0) localStorage.removeItem(key)
+        else localStorage.setItem(key, JSON.stringify(normalized))
+      } catch (reason) {
+        // Filter persistence is a convenience; a full quota must not break the board.
+      }
+    }
+
+    function matchesLabelFilters(issue, filters) {
+      const rows = normalizeLabelFilters(filters)
+      if (rows.length === 0) return true
+      const names = new Set(
+        Array.isArray(issue && issue.labels)
+          ? issue.labels.map((label) => label && label.name).filter((name) => typeof name === 'string')
+          : [],
+      )
+      return rows.every((row) => row.some((name) => names.has(name)))
     }
 
     function compareIssues(a, b) {
@@ -1264,6 +1396,7 @@ window.__ModuleLoader__.load({
       },
       h('header', { className: 'gkb-col-head' }, props.head),
       props.hint ? h('div', { className: 'gkb-col-hint' }, props.hint) : null,
+      props.overlay || null,
       h('div', { className: 'gkb-col-list' },
         hasChildren ? children : h('div', { className: 'gkb-col-empty' }, props.empty)),
       props.footer || null)
@@ -1751,12 +1884,19 @@ window.__ModuleLoader__.load({
       const [repoDraft, setRepoDraft] = useState(null)
       const [selected, setSelected] = useState(null)
       const [panelOpen, setPanelOpen] = useState(false)
+      const [labelFilters, setLabelFilters] = useState([])
+      const [filterOpen, setFilterOpen] = useState(false)
+      const [pickerRow, setPickerRow] = useState(null)
+      const [filterSearch, setFilterSearch] = useState('')
 
       const inFlightRef = useRef(false)
       const lastSyncRef = useRef(0)
       const suppressClickRef = useRef(0)
       const stripRef = useRef(null)
       const addInputRef = useRef(null)
+      const filterPanelRef = useRef(null)
+      const filterButtonRef = useRef(null)
+      const filtersRepoRef = useRef('')
       const mountedRef = useRef(true)
 
       const applyData = useCallback((data) => {
@@ -1912,6 +2052,109 @@ window.__ModuleLoader__.load({
         bannerText = hostError
       }
 
+      // Inbox label filters: every row is an AND clause and the labels picked
+      // inside a row are OR alternatives.
+      const activateFilters = useCallback((updater) => {
+        setLabelFilters((previous) => {
+          const next = typeof updater === 'function' ? updater(previous) : updater
+          const safe = Array.isArray(next) ? next : previous
+          saveLabelFilters(filtersRepoRef.current, safe)
+          return safe
+        })
+      }, [])
+
+      useEffect(() => {
+        if (filtersRepoRef.current === repo) return
+        filtersRepoRef.current = repo
+        setLabelFilters(loadLabelFilters(repo))
+        setFilterOpen(false)
+        setPickerRow(null)
+        setFilterSearch('')
+      }, [repo])
+
+      useEffect(() => {
+        if (!filterOpen) return undefined
+        const close = () => {
+          setFilterOpen(false)
+          setPickerRow(null)
+          setFilterSearch('')
+        }
+        const onPointerDown = (event) => {
+          const target = event.target
+          if (typeof Node !== 'undefined' && !(target instanceof Node)) return
+          if (filterPanelRef.current && filterPanelRef.current.contains(target)) return
+          if (filterButtonRef.current && filterButtonRef.current.contains(target)) return
+          close()
+        }
+        const onKeyDown = (event) => {
+          if (event.key === 'Escape') close()
+        }
+        document.addEventListener('pointerdown', onPointerDown)
+        document.addEventListener('keydown', onKeyDown)
+        return () => {
+          document.removeEventListener('pointerdown', onPointerDown)
+          document.removeEventListener('keydown', onKeyDown)
+        }
+      }, [filterOpen])
+
+      const filteredInbox = useMemo(() => (
+        orderedInbox.filter((issue) => matchesLabelFilters(issue, labelFilters))
+      ), [orderedInbox, labelFilters])
+
+      const activeFilterRows = labelFilters.filter((row) => Array.isArray(row) && row.length > 0).length
+
+      const labelOptions = useMemo(() => {
+        const map = new Map()
+        for (const issue of orderedInbox) {
+          for (const label of issue.labels) {
+            if (!label || typeof label.name !== 'string' || label.name === '') continue
+            const previous = map.get(label.name)
+            if (previous === undefined) map.set(label.name, { name: label.name, color: label.color || '', count: 1 })
+            else previous.count += 1
+          }
+        }
+        return [...map.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+      }, [orderedInbox])
+
+      const pickerOptions = useMemo(() => {
+        const query = filterSearch.trim().toLowerCase()
+        if (query === '') return labelOptions
+        return labelOptions.filter((option) => option.name.toLowerCase().includes(query))
+      }, [labelOptions, filterSearch])
+
+      const toggleFilterLabel = (rowIndex, name) => {
+        activateFilters((previous) => {
+          const rows = previous.map((row) => (Array.isArray(row) ? row.slice() : []))
+          while (rows.length <= rowIndex) rows.push([])
+          const row = rows[rowIndex]
+          const existing = row.indexOf(name)
+          if (existing >= 0) row.splice(existing, 1)
+          else row.push(name)
+          return rows
+        })
+      }
+
+      const removeFilterRow = (rowIndex) => {
+        activateFilters((previous) => previous.filter((row, index) => index !== rowIndex))
+        setPickerRow((current) => {
+          if (current === rowIndex) return null
+          return current !== null && current > rowIndex ? current - 1 : current
+        })
+      }
+
+      const addFilterRow = () => {
+        if (labelFilters.length >= 6) return
+        activateFilters((previous) => [...previous, []])
+        setPickerRow(labelFilters.length)
+        setFilterSearch('')
+      }
+
+      const clearFilters = () => {
+        activateFilters([])
+        setPickerRow(null)
+        setFilterSearch('')
+      }
+
       const openIssue = (number) => {
         if (number === null) return
         if (panelOpen && selected === number) {
@@ -2049,7 +2292,7 @@ window.__ModuleLoader__.load({
         }
       }
 
-      const inboxCards = orderedInbox.map((issue) => {
+      const inboxCards = filteredInbox.map((issue) => {
         const task = taskByIssue.get(issue.number) || null
         const group = task !== null ? groupById.get(task.groupId) || null : null
         return h(IssueCard, {
@@ -2067,11 +2310,134 @@ window.__ModuleLoader__.load({
         })
       })
 
+      const filterButton = h('button', {
+        className: 'gkb-btn',
+        type: 'button',
+        ref: filterButtonRef,
+        'aria-label': t('filter.open'),
+        title: activeFilterRows > 0 ? tx(t, 'filter.active', { n: activeFilterRows }) : t('filter.open'),
+        onClick: () => {
+          setFilterOpen((open) => {
+            if (open) {
+              setPickerRow(null)
+              setFilterSearch('')
+            }
+            return !open
+          })
+        },
+      },
+      h(Glyph, { name: 'filter' }),
+      activeFilterRows > 0 ? h('span', { className: 'gkb-filter-count' }, String(activeFilterRows)) : null)
+
+      const filterPanel = filterOpen
+        ? h('div', { className: 'gkb-labelfilter', ref: filterPanelRef, role: 'dialog', 'aria-label': t('filter.title') },
+          h('div', { className: 'gkb-filter-head' },
+            h('span', { className: 'gkb-filter-title' }, t('filter.title')),
+            h('span', { className: 'gkb-filter-hint' }, t('filter.hint')),
+            h('span', { className: 'gkb-filter-grow' }),
+            h(IconButton, {
+              icon: 'close',
+              label: t('filter.close'),
+              title: t('filter.close'),
+              onClick: () => {
+                setFilterOpen(false)
+                setPickerRow(null)
+                setFilterSearch('')
+              },
+            })),
+          labelFilters.length === 0
+            ? h('div', { className: 'gkb-filter-empty' }, t('filter.empty'))
+            : labelFilters.map((row, rowIndex) => h('div', { className: 'gkb-filter-row', key: 'filter-row-' + rowIndex },
+              h('div', { className: 'gkb-filter-row-line' },
+                h('span', { className: 'gkb-filter-row-index' }, String(rowIndex + 1)),
+                h('div', { className: 'gkb-filter-row-labels' },
+                  row.length === 0
+                    ? h('span', { className: 'gkb-muted' }, t('filter.addLabel'))
+                    : row.map((name) => {
+                      const option = labelOptions.find((item) => item.name === name) || { name, color: '' }
+                      const colour = labelColour(option.color)
+                      return h('button', {
+                        key: name,
+                        className: 'gkb-filter-chip',
+                        type: 'button',
+                        title: tx(t, 'filter.removeLabel', { name }),
+                        onClick: () => toggleFilterLabel(rowIndex, name),
+                      },
+                      h('span', { className: 'gkb-label-dot', 'aria-hidden': 'true', style: colour !== '' ? { background: colour } : undefined }),
+                      h('span', { className: 'gkb-filter-chip-name' }, name),
+                      h('span', { className: 'gkb-filter-chip-x', 'aria-hidden': 'true' }, '×'))
+                    }),
+                  h('button', {
+                    className: 'gkb-btn',
+                    type: 'button',
+                    onClick: () => {
+                      setPickerRow(pickerRow === rowIndex ? null : rowIndex)
+                      setFilterSearch('')
+                    },
+                  }, h(Glyph, { name: 'plus' }), h('span', null, t('filter.addLabel')))),
+                h(IconButton, {
+                  icon: 'trash',
+                  label: t('filter.removeRow'),
+                  title: t('filter.removeRow'),
+                  onClick: () => removeFilterRow(rowIndex),
+                })),
+              pickerRow === rowIndex
+                ? h('div', { className: 'gkb-filter-picker' },
+                  h('input', {
+                    className: 'gkb-input gkb-filter-search',
+                    value: filterSearch,
+                    placeholder: t('filter.search'),
+                    'aria-label': t('filter.search'),
+                    onChange: (event) => setFilterSearch(event.target.value),
+                    onKeyDown: (event) => {
+                      if (event.key === 'Escape') {
+                        event.stopPropagation()
+                        setPickerRow(null)
+                        setFilterSearch('')
+                      }
+                    },
+                  }),
+                  pickerOptions.length === 0
+                    ? h('div', { className: 'gkb-filter-empty' }, t('filter.noLabels'))
+                    : pickerOptions.map((option) => {
+                      const on = row.includes(option.name)
+                      const colour = labelColour(option.color)
+                      return h('button', {
+                        key: option.name,
+                        className: 'gkb-label-option',
+                        type: 'button',
+                        'data-on': on ? 'true' : 'false',
+                        'aria-pressed': on ? 'true' : 'false',
+                        onClick: () => toggleFilterLabel(rowIndex, option.name),
+                      },
+                      h('span', { className: 'gkb-label-dot', 'aria-hidden': 'true', style: colour !== '' ? { background: colour } : undefined }),
+                      h('span', { className: 'gkb-label-option-name' }, option.name),
+                      h('span', { className: 'gkb-label-option-count' }, String(option.count)))
+                    }))
+                : null)),
+          h('div', { className: 'gkb-filter-actions' },
+            h('button', {
+              className: 'gkb-btn',
+              type: 'button',
+              disabled: labelFilters.length >= 6,
+              onClick: addFilterRow,
+            }, h(Glyph, { name: 'plus' }), h('span', null, t('filter.addRow'))),
+            h('span', { className: 'gkb-filter-grow' }),
+            labelFilters.length > 0
+              ? h('button', { className: 'gkb-btn', type: 'button', onClick: clearFilters }, t('filter.clear'))
+              : null))
+        : null
+
       const inboxHead = [
         h('span', { className: 'gkb-col-dot', key: 'dot', 'aria-hidden': 'true' }),
         h('span', { className: 'gkb-col-title', key: 'title' }, t('inbox.title')),
-        h('span', { className: 'gkb-col-count', key: 'count' }, String(inboxCards.length)),
+        h('span', {
+          className: 'gkb-col-count',
+          key: 'count',
+          title: activeFilterRows > 0 ? t('filter.noMatch') : undefined,
+        }, activeFilterRows > 0 ? `${inboxCards.length}/${orderedInbox.length}` : String(inboxCards.length)),
         h('span', { className: 'gkb-col-actions', key: 'actions' },
+          filterButton,
           h('button', {
             className: 'gkb-btn',
             type: 'button',
@@ -2087,7 +2453,8 @@ window.__ModuleLoader__.load({
         tone: 'inbox',
         head: inboxHead,
         hint: t('inbox.hint'),
-        empty: t('panel.empty'),
+        overlay: filterPanel,
+        empty: activeFilterRows > 0 ? t('filter.noMatch') : t('panel.empty'),
         over: dropTarget === 'inbox' && canDrop(dragState, 'inbox'),
         onDragOver: (event) => handleDragOver(event, 'inbox', 'inbox'),
         onDragLeave: (event) => handleDragLeave(event, 'inbox'),
