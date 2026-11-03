@@ -147,7 +147,8 @@ window.__ModuleLoader__.load({
     const CSS = `
       .gkb-root { position: relative; display: flex; flex-direction: column; height: 100%; min-height: 360px;
         box-sizing: border-box; overflow: hidden; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary);
-        font-family: inherit; font-size: 12px; line-height: 18px; }
+        font-family: inherit; font-size: 12px; line-height: 18px; color-scheme: light; }
+      .gkb-root[data-scheme="dark"] { color-scheme: dark; }
       .gkb-root *, .gkb-root *::before, .gkb-root *::after { box-sizing: border-box; }
       .gkb-header { flex: none; display: flex; align-items: center; gap: 10px; padding: 9px 14px;
         border-bottom: 1px solid var(--dsw-alias-border-l1); }
@@ -265,14 +266,18 @@ window.__ModuleLoader__.load({
         border: 1px dashed var(--dsw-alias-border-l2); background: var(--dsw-alias-bg-layer-1); }
       .gkb-add-input { width: 100%; }
       .gkb-add-actions { display: flex; gap: 6px; }
-      .gkb-detail { position: absolute; top: 0; right: 0; bottom: 0; z-index: 20; width: 400px; max-width: 92%;
+      .gkb-detail { position: absolute; top: 0; right: 0; bottom: 0; z-index: 20;
+        width: 50%; min-width: 380px; max-width: 100%;
         display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--dsw-alias-border-l2);
-        background: var(--dsw-alias-bg-overlay); transform: translateX(100%); visibility: hidden;
+        background: var(--dsw-alias-bg-layer-1); transform: translateX(100%); visibility: hidden;
+        box-shadow: -12px 0 32px rgba(0, 0, 0, .18);
         transition: transform 200ms cubic-bezier(.22, .61, .36, 1), visibility 0s linear 200ms; }
       .gkb-detail[data-open="true"] { transform: translateX(0); visibility: visible;
         transition: transform 200ms cubic-bezier(.22, .61, .36, 1), visibility 0s linear 0s; }
-      .gkb-detail-head { flex: none; display: flex; align-items: center; gap: 8px; padding: 10px 12px;
-        border-bottom: 1px solid var(--dsw-alias-border-l1); }
+      .gkb-root[data-scheme="dark"] .gkb-detail { box-shadow: -18px 0 52px rgba(0, 0, 0, .55); }
+      .gkb-detail-head { flex: none; display: flex; align-items: center; gap: 8px; padding: 10px 14px;
+        background: var(--dsw-alias-bg-layer-2);
+        border-bottom: 1px solid var(--dsw-alias-border-l2); }
       .gkb-detail-head-main { display: flex; align-items: center; gap: 8px; flex: 1 1 auto; min-width: 0; }
       .gkb-detail-num { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
       .gkb-pill { flex: none; height: 18px; padding: 0 6px; border-radius: 4px; font-size: 10px; line-height: 16px;
@@ -294,7 +299,7 @@ window.__ModuleLoader__.load({
       .gkb-link:hover { text-decoration: underline; }
       .gkb-link:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
       .gkb-body-text { max-height: 150px; overflow-y: auto; padding: 8px; border-radius: 8px;
-        border: 1px solid var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-layer-1); font-size: 12px;
+        border: 1px solid var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-base); font-size: 12px;
         line-height: 18px; color: var(--dsw-alias-label-secondary); white-space: pre-wrap; word-break: break-word; }
       .gkb-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
       .gkb-select { height: 24px; max-width: 100%; padding: 0 6px; border-radius: 6px;
@@ -304,12 +309,12 @@ window.__ModuleLoader__.load({
       .gkb-action-msg { font-size: 11px; color: var(--dsw-alias-state-success-primary); }
       .gkb-action-error { font-size: 11px; color: var(--dsw-alias-state-error-primary); }
       .gkb-graph { border-radius: 10px; border: 1px solid var(--dsw-alias-border-l1);
-        background: var(--dsw-alias-bg-layer-1); padding: 6px; }
+        background: var(--dsw-alias-bg-base); padding: 6px; }
       .gkb-graph-svg { display: block; width: 100%; height: auto; overflow: visible; }
       .gkb-gnode { cursor: pointer; }
       .gkb-gnode-focus { cursor: default; }
-      .gkb-gnode-rect { fill: var(--dsw-alias-bg-base); stroke: var(--dsw-alias-border-l2); stroke-width: 1; }
-      .gkb-gnode-focus .gkb-gnode-rect { fill: var(--dsw-alias-bg-overlay);
+      .gkb-gnode-rect { fill: var(--dsw-alias-bg-layer-1); stroke: var(--dsw-alias-border-l2); stroke-width: 1; }
+      .gkb-gnode-focus .gkb-gnode-rect { fill: var(--dsw-alias-bg-layer-2);
         stroke: var(--dsw-alias-brand-primary); stroke-width: 1.6; }
       .gkb-gnode:hover .gkb-gnode-rect, .gkb-gnode:focus-visible .gkb-gnode-rect {
         stroke: var(--dsw-alias-brand-primary); }
@@ -324,14 +329,14 @@ window.__ModuleLoader__.load({
       .gkb-edge-line { fill: none; stroke-width: 1.6; stroke-dasharray: 5 5; stroke-linecap: round;
         animation: gkb-flow 1.2s linear infinite; }
       .gkb-edge-label { font-size: 9px; fill: var(--dsw-alias-label-secondary); paint-order: stroke;
-        stroke: var(--dsw-alias-bg-layer-1); stroke-width: 3px; stroke-linejoin: round; }
+        stroke: var(--dsw-alias-bg-base); stroke-width: 3px; stroke-linejoin: round; }
       .gkb-legend { display: flex; flex-wrap: wrap; gap: 10px; }
       .gkb-legend-item { display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px;
         color: var(--dsw-alias-label-secondary); }
       .gkb-legend-dash { animation: gkb-flow 1.2s linear infinite; }
       .gkb-rel-list { display: flex; flex-direction: column; gap: 4px; }
       .gkb-rel-item { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 4px 6px;
-        border-radius: 6px; border: 1px solid var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-layer-1);
+        border-radius: 6px; border: 1px solid var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-base);
         font-size: 11px; }
       .gkb-rel-num { flex: none; font-weight: 600; color: var(--dsw-alias-label-secondary);
         font-variant-numeric: tabular-nums; }
@@ -584,6 +589,64 @@ window.__ModuleLoader__.load({
     function refreshIssueStats() {
       issueStatsToken += 1
       fetchIssueStats(0)
+    }
+
+    // ------------------------------------------------------------------
+    // Active theme scheme: a light/dark attribute drives the detail panel's
+    // night-mode contrast (opaque surface, stronger shadow, color-scheme).
+    // ------------------------------------------------------------------
+
+    const SCHEME_QUERY = '(prefers-color-scheme: dark)'
+    let activeScheme = 'light'
+    const schemeListeners = new Set()
+
+    function schemeFromSnapshot(snapshot) {
+      const scheme = snapshot && snapshot.active && typeof snapshot.active.colorScheme === 'string'
+        ? snapshot.active.colorScheme
+        : ''
+      return scheme === 'dark' ? 'dark' : 'light'
+    }
+
+    function detectScheme() {
+      try {
+        if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+          return window.matchMedia(SCHEME_QUERY).matches ? 'dark' : 'light'
+        }
+      } catch (reason) {
+        // No media query in this host; fall back to the light palette marker.
+      }
+      return 'light'
+    }
+
+    function setActiveScheme(next) {
+      const scheme = next === 'dark' ? 'dark' : 'light'
+      if (scheme === activeScheme) return
+      activeScheme = scheme
+      for (const listener of schemeListeners) {
+        try {
+          listener()
+        } catch (reason) {
+          // A scheme subscriber failing must not break the theme change.
+        }
+      }
+    }
+
+    function subscribeScheme(listener) {
+      schemeListeners.add(listener)
+      return () => {
+        schemeListeners.delete(listener)
+      }
+    }
+
+    function useScheme() {
+      const [scheme, setScheme] = useState(activeScheme)
+      useEffect(() => {
+        const sync = () => setScheme(activeScheme)
+        const unsubscribe = subscribeScheme(sync)
+        sync()
+        return unsubscribe
+      }, [])
+      return scheme
     }
 
     // ------------------------------------------------------------------
@@ -1669,6 +1732,7 @@ window.__ModuleLoader__.load({
 
     function BoardView(props) {
       const t = resolveT(props)
+      const scheme = useScheme()
 
       const [board, setBoard] = useState(null)
       const [loading, setLoading] = useState(true)
@@ -2289,7 +2353,7 @@ window.__ModuleLoader__.load({
           groupColumns,
           addTile)
 
-      return h('div', { className: 'gkb-root' },
+      return h('div', { className: 'gkb-root', 'data-scheme': scheme },
         h('style', null, CSS),
         header,
         errorBanner,
@@ -2351,6 +2415,19 @@ window.__ModuleLoader__.load({
       inject: ['slots', 'locale'],
       apply(ctx) {
         ctx.effect(() => ctx.locale.register(NS, { zh: ZH, en: EN }), 'github-kanban: dictionaries')
+        // The theme service reports the resolved light/dark palette; the OS
+        // media query is only a fallback when the service is unavailable.
+        try {
+          const theme = typeof ctx.get === 'function' ? ctx.get('theme') : undefined
+          activeScheme = theme && typeof theme.getTheme === 'function'
+            ? schemeFromSnapshot(theme.getTheme())
+            : detectScheme()
+          if (typeof ctx.on === 'function') {
+            ctx.on('theme/change', (snapshot) => setActiveScheme(schemeFromSnapshot(snapshot)))
+          }
+        } catch (reason) {
+          activeScheme = detectScheme()
+        }
         const t = ctx.locale.bind(NS)
         fallbackT = t
         ctx.slots.inject('main', () => ctx.slots.register({
