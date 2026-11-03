@@ -107,6 +107,10 @@ window.__ModuleLoader__.load({
       'detail.comments': '{n} 条评论',
       'detail.updatedAt': '更新于 {date}',
       'relation.parent': '父子',
+      'relation.finished': '已完成',
+      'relation.unfinished': '未完成',
+      'relation.group': '看板分组',
+      'relation.stateLegend': '状态：✓ 已完成（已关闭）· ○ 未完成；色条 / 圆点 = 看板分组颜色',
       'relation.blocks': '阻塞 / 依赖',
       'relation.relates': '关联',
       'relation.list': '关系列表',
@@ -220,6 +224,10 @@ window.__ModuleLoader__.load({
       'detail.comments': '{n} comments',
       'detail.updatedAt': 'Updated {date}',
       'relation.parent': 'Parent / child',
+      'relation.finished': 'Done',
+      'relation.unfinished': 'Open',
+      'relation.group': 'Kanban group',
+      'relation.stateLegend': 'State: ✓ done (closed) · ○ open; bars / dots = kanban group colour',
       'relation.blocks': 'Blocks / depends on',
       'relation.relates': 'Related',
       'relation.list': 'Relation list',
@@ -536,9 +544,28 @@ window.__ModuleLoader__.load({
         color: var(--dsw-alias-label-secondary); }
       .gkb-legend-dash { animation: gkb-flow 1.2s linear infinite; }
       .gkb-rel-list { display: flex; flex-direction: column; gap: 4px; }
-      .gkb-rel-item { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 4px 6px;
+      .gkb-rel-item { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; padding: 4px 6px;
         border-radius: 6px; border: 1px solid var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-base);
         font-size: 11px; }
+      .gkb-rel-endpoint { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
+      .gkb-rel-state { flex: none; font-size: 10px; line-height: 14px; font-weight: 600;
+        color: var(--dsw-alias-state-success-primary); }
+      .gkb-rel-state[data-state="CLOSED"] { color: var(--dsw-alias-label-secondary); }
+      .gkb-group-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 118px; height: 16px;
+        padding: 0 5px; border-radius: 4px; border: 1px solid var(--dsw-alias-border-l1);
+        background: var(--dsw-alias-bg-layer-2); font-size: 9.5px; line-height: 14px;
+        color: var(--dsw-alias-label-secondary); overflow: hidden; }
+      .gkb-group-dot { width: 6px; height: 6px; border-radius: 50%; flex: none;
+        background: var(--dsw-alias-label-secondary); }
+      .gkb-group-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .gkb-state-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 10px;
+        color: var(--dsw-alias-label-secondary); }
+      .gkb-gnode-accent { pointer-events: none; }
+      .gkb-gnode-closed .gkb-gnode-rect { stroke-dasharray: 4 3; }
+      .gkb-gnode-closed .gkb-gnode-title { fill: var(--dsw-alias-label-secondary); }
+      .gkb-gnode-state-text { fill: var(--dsw-alias-label-secondary); font-size: 8px; font-weight: 600; }
+      .gkb-gnode-closed .gkb-gnode-state-text { fill: var(--dsw-alias-state-idle-primary); }
+      .gkb-gnode:not(.gkb-gnode-closed) .gkb-gnode-state-text { fill: var(--dsw-alias-state-success-primary); }
       .gkb-rel-num { flex: none; font-weight: 600; color: var(--dsw-alias-label-secondary);
         font-variant-numeric: tabular-nums; }
       .gkb-rel-kind { flex: none; font-size: 10px; }
@@ -686,6 +713,10 @@ window.__ModuleLoader__.load({
     const GRAPH_FOCUS = { w: 172, h: 58 }
     const GRAPH_NODE = { w: 138, h: 48 }
     const GRAPH_PAD = 24
+
+    // Kanban column marker palette (artwork colours: they identify groups in
+    // the board columns, relation graph accents and relation rows alike).
+    const GROUP_COLOURS = ['#3b82f6', '#f59e0b', '#a855f7', '#64748b', '#14b8a6', '#ec4899']
 
     const GLYPHS = {
       plus: 'M8 3.5v9M3.5 8h9',
@@ -1904,6 +1935,7 @@ window.__ModuleLoader__.load({
       }
       const uid = uidRef.current
       const onSelectIssue = typeof props.onSelectIssue === 'function' ? props.onSelectIssue : null
+      const groupMarks = props.groupMarks instanceof Map ? props.groupMarks : null
       if (!layout || !Array.isArray(layout.nodes) || layout.nodes.length === 0) return null
       const edges = Array.isArray(layout.edges) ? layout.edges : []
       const nodes = layout.nodes
@@ -1970,6 +2002,24 @@ window.__ModuleLoader__.load({
           cy: badgeY + badgeH / 2,
           r: 3,
         })
+        const stateText = h('text', {
+          className: 'gkb-gnode-state-text',
+          x: w / 2 - 17,
+          y: badgeY + badgeH - 4,
+          textAnchor: 'end',
+        }, node.state === 'CLOSED' ? t('relation.finished') : t('relation.unfinished'))
+        const mark = groupMarks !== null ? groupMarks.get(node.number) : undefined
+        const accent = mark === undefined
+          ? null
+          : h('rect', {
+            className: 'gkb-gnode-accent',
+            x: -w / 2 + 2.5,
+            y: -hh / 2 + 9,
+            width: 3,
+            height: hh - 18,
+            rx: 1.5,
+            fill: mark.color,
+          })
         const titleText = lines.length > 0
           ? h('text', {
             className: 'gkb-gnode-title',
@@ -1984,7 +2034,8 @@ window.__ModuleLoader__.load({
           : null
         return h('g', {
           key: node.number,
-          className: 'gkb-gnode' + (node.focus ? ' gkb-gnode-focus' : ''),
+          className: 'gkb-gnode' + (node.focus ? ' gkb-gnode-focus' : '')
+            + (node.state === 'CLOSED' ? ' gkb-gnode-closed' : ''),
           transform: 'translate(' + round1(node.cx) + ' ' + round1(node.cy) + ')',
           role: interactive ? 'button' : undefined,
           tabIndex: interactive ? 0 : undefined,
@@ -1998,7 +2049,7 @@ window.__ModuleLoader__.load({
               }
             }
             : undefined,
-        }, rect, badgeRect, numberText, stateDot, titleText)
+        }, accent, rect, badgeRect, numberText, stateDot, stateText, titleText)
       })
 
       return h('svg', {
@@ -2033,6 +2084,7 @@ window.__ModuleLoader__.load({
       const issue = props.issue && typeof props.issue === 'object' ? props.issue : null
       const task = props.task && typeof props.task === 'object' ? props.task : null
       const groups = Array.isArray(props.groups) ? props.groups : EMPTY
+      const tasks = Array.isArray(props.tasks) ? props.tasks : EMPTY
       const repo = typeof props.repo === 'string' ? props.repo : ''
       const runAction = typeof props.runAction === 'function' ? props.runAction : null
       const onSelectIssue = typeof props.onSelectIssue === 'function' ? props.onSelectIssue : null
@@ -2106,6 +2158,37 @@ window.__ModuleLoader__.load({
 
       const graphLayout = useMemo(() => computeGraphLayout(graph), [graph])
       const relationsReady = graphLayout !== null && graphLayout.nodes.length > 1 && graphLayout.edges.length > 0
+      // Which kanban column each related issue sits in, with the same palette
+      // the board columns use. State (open/closed) is tracked separately.
+      const groupMarksByIssue = useMemo(() => {
+        const marks = new Map()
+        const colourByGroup = new Map()
+        groups.forEach((group, index) => colourByGroup.set(group.id, {
+          id: group.id,
+          name: group.name,
+          color: GROUP_COLOURS[index % GROUP_COLOURS.length],
+        }))
+        for (const task of tasks) {
+          const marker = colourByGroup.get(task.groupId)
+          if (marker !== undefined) marks.set(task.issueNumber, marker)
+        }
+        return marks
+      }, [groups, tasks])
+      const nodeStates = useMemo(() => {
+        const states = new Map()
+        if (graphLayout !== null) for (const node of graphLayout.nodes) states.set(node.number, node.state === 'CLOSED' ? 'CLOSED' : 'OPEN')
+        return states
+      }, [graphLayout])
+      const presentGroups = useMemo(() => {
+        const marks = new Map()
+        if (graphLayout !== null) {
+          for (const node of graphLayout.nodes) {
+            const marker = groupMarksByIssue.get(node.number)
+            if (marker !== undefined && !marks.has(marker.id)) marks.set(marker.id, marker)
+          }
+        }
+        return [...marks.values()]
+      }, [graphLayout, groupMarksByIssue])
 
       const presentKinds = useMemo(() => {
         const kinds = new Set()
@@ -2212,6 +2295,23 @@ window.__ModuleLoader__.load({
           })),
         h('span', null, t(item.labelKey)))))
 
+      const renderEndpoint = (number) => {
+        const marker = groupMarksByIssue.get(number) || null
+        const state = nodeStates.get(number) === 'CLOSED' ? 'CLOSED' : 'OPEN'
+        return h('span', { className: 'gkb-rel-endpoint' },
+          h('span', { className: 'gkb-rel-num' }, '#' + number),
+          h('span', {
+            className: 'gkb-rel-state',
+            'data-state': state,
+            'aria-hidden': 'true',
+            title: state === 'CLOSED' ? t('relation.finished') : t('relation.unfinished'),
+          }, state === 'CLOSED' ? '✓' : '○'),
+          marker !== null
+            ? h('span', { className: 'gkb-group-chip', title: t('relation.group') + '：' + marker.name },
+              h('span', { className: 'gkb-group-dot', style: { background: marker.color }, 'aria-hidden': 'true' }),
+              h('span', { className: 'gkb-group-name' }, marker.name))
+            : null)
+      }
       const renderEdgeRow = (edge) => {
         const fromTitle = nodeTitles.get(edge.from) || ''
         const toTitle = nodeTitles.get(edge.to) || ''
@@ -2222,12 +2322,22 @@ window.__ModuleLoader__.load({
           title: '#' + edge.from + (fromTitle !== '' ? ' ' + fromTitle : '')
             + ' → #' + edge.to + (toTitle !== '' ? ' ' + toTitle : ''),
         },
-        h('span', { className: 'gkb-rel-num' }, '#' + edge.from),
+        renderEndpoint(edge.from),
         h('span', { className: 'gkb-rel-kind', style: { color: EDGE_COLOUR[edge.kind] || EDGE_COLOUR.relates } }, label),
         h('span', { className: 'gkb-rel-arrow', 'aria-hidden': 'true' }, '→'),
-        h('span', { className: 'gkb-rel-num' }, '#' + edge.to),
+        renderEndpoint(edge.to),
         toTitle !== '' ? h('span', { className: 'gkb-rel-title' }, toTitle) : null)
       }
+      const stateLegend = graphLayout === null ? null : h('div', { className: 'gkb-state-legend' },
+        h('span', { className: 'gkb-legend-item' },
+          h('span', { className: 'gkb-rel-state', 'data-state': 'CLOSED', 'aria-hidden': 'true' }, '✓'),
+          t('relation.finished')),
+        h('span', { className: 'gkb-legend-item' },
+          h('span', { className: 'gkb-rel-state', 'data-state': 'OPEN', 'aria-hidden': 'true' }, '○'),
+          t('relation.unfinished')),
+        presentGroups.map((marker) => h('span', { key: marker.id, className: 'gkb-legend-item' },
+          h('span', { className: 'gkb-group-dot', style: { background: marker.color }, 'aria-hidden': 'true' }),
+          marker.name)))
 
       const neighbourCount = graphLayout === null ? 0 : Math.max(0, graphLayout.nodes.length - 1)
       const truncatedNote = !graphLoading && graphError === null && graph !== null
@@ -2268,9 +2378,11 @@ window.__ModuleLoader__.load({
                   h('div', { className: 'gkb-graph' }, h(RelationGraph, {
                     t,
                     layout: graphLayout,
+                    groupMarks: groupMarksByIssue,
                     onSelectIssue,
                   })),
                   legend,
+                  stateLegend,
                   h('div', { className: 'gkb-section' },
                     h('h3', { className: 'gkb-section-title' }, t('relation.list')),
                     h('div', { className: 'gkb-rel-list' },
@@ -2301,9 +2413,11 @@ window.__ModuleLoader__.load({
               h('div', { className: 'gkb-graph gkb-rel-zoom-graph' }, h(RelationGraph, {
                 t,
                 layout: graphLayout,
+                groupMarks: groupMarksByIssue,
                 onSelectIssue,
               })),
-              legend),
+              legend,
+              stateLegend),
             h('div', { className: 'gkb-rel-zoom-actions' },
               h('button', {
                 className: 'gkb-btn',
@@ -3284,7 +3398,7 @@ window.__ModuleLoader__.load({
         },
       }, inboxCards)
 
-      const groupColumns = sortedGroups.map((group) => {
+      const groupColumns = sortedGroups.map((group, groupIndex) => {
         const cards = cardsByGroup.get(group.id) || EMPTY
         const key = 'group:' + group.id
         const head = renaming === group.id
@@ -3339,7 +3453,12 @@ window.__ModuleLoader__.load({
                 }, t('settings.cancel'))),
             ]
             : [
-              h('span', { className: 'gkb-col-dot', key: 'dot', 'aria-hidden': 'true' }),
+              h('span', {
+                className: 'gkb-col-dot',
+                key: 'dot',
+                'aria-hidden': 'true',
+                style: { background: GROUP_COLOURS[groupIndex % GROUP_COLOURS.length] },
+              }),
               h('span', { className: 'gkb-col-title', key: 'title', title: group.name }, group.name),
               h('span', { className: 'gkb-col-count', key: 'count' }, String(cards.length)),
               h('span', { className: 'gkb-col-actions', key: 'actions' },
@@ -3555,6 +3674,7 @@ window.__ModuleLoader__.load({
             issue: selected === null ? null : issueByNumber.get(selected) || null,
             task: selected === null ? null : taskByIssue.get(selected) || null,
             groups: sortedGroups,
+            tasks: boardTasks,
             repo,
             runAction,
             relationsZoomed,
