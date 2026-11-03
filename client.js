@@ -65,6 +65,9 @@ window.__ModuleLoader__.load({
       'detail.remove': '移出待办',
       'detail.relations': '关联关系',
       'detail.relationsEmpty': '未发现关联 issue',
+      'detail.zoom': '放大',
+      'detail.shrink': '缩小还原',
+      'detail.zoomHint': '上层放大显示；点击节点可切换 issue',
       'detail.truncated': '关联过多，仅显示部分邻居。',
       'detail.graphError': '关联关系加载失败',
       'detail.added': '已加入分组',
@@ -143,6 +146,9 @@ window.__ModuleLoader__.load({
       'detail.remove': 'Remove from todos',
       'detail.relations': 'Relationships',
       'detail.relationsEmpty': 'No related issues found',
+      'detail.zoom': 'Enlarge',
+      'detail.shrink': 'Restore',
+      'detail.zoomHint': 'Shown enlarged above the board; click a node to switch issues',
       'detail.truncated': 'Too many relations; only some neighbours are shown.',
       'detail.graphError': 'Failed to load relationships',
       'detail.added': 'Added to the group',
@@ -347,6 +353,7 @@ window.__ModuleLoader__.load({
         transition: transform 200ms cubic-bezier(.22, .61, .36, 1), visibility 0s linear 200ms; }
       .gkb-detail[data-open="true"] { transform: translateX(0); visibility: visible;
         transition: transform 200ms cubic-bezier(.22, .61, .36, 1), visibility 0s linear 0s; }
+      .gkb-detail[data-zoomed="true"] { transform: none; }
       .gkb-root[data-scheme="dark"] .gkb-detail { box-shadow: -18px 0 52px rgba(0, 0, 0, .55); }
       .gkb-detail-head { flex: none; display: flex; align-items: center; gap: 8px; padding: 10px 14px;
         background: var(--dsw-alias-bg-layer-2);
@@ -367,6 +374,25 @@ window.__ModuleLoader__.load({
       .gkb-section { display: flex; flex-direction: column; gap: 8px; }
       .gkb-section-title { margin: 0; font-size: 11px; font-weight: 600; letter-spacing: .02em;
         color: var(--dsw-alias-label-secondary); }
+      .gkb-section-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+      .gkb-zoom-btn { flex: none; height: 20px; padding: 0 7px; font-size: 10.5px; }
+      .gkb-rel-zoom { position: fixed; inset: 0; z-index: 80; display: flex; align-items: center;
+        justify-content: center; padding: 16px; }
+      .gkb-rel-zoom-backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, .48); }
+      .gkb-rel-zoom-card { position: relative; display: flex; flex-direction: column; gap: 10px;
+        width: min(92vw, 1500px); height: min(88vh, 940px); padding: 14px; border-radius: 14px;
+        border: 1px solid var(--dsw-alias-border-l2); background: var(--dsw-alias-bg-layer-1);
+        box-shadow: 0 24px 80px rgba(0, 0, 0, .5); }
+      .gkb-root[data-scheme="dark"] .gkb-rel-zoom-card { box-shadow: 0 28px 96px rgba(0, 0, 0, .72); }
+      .gkb-rel-zoom-head { flex: none; display: flex; align-items: center; gap: 8px; }
+      .gkb-rel-zoom-title { font-size: 13px; font-weight: 600; color: var(--dsw-alias-label-primary); }
+      .gkb-rel-zoom-hint { font-size: 10.5px; color: var(--dsw-alias-label-secondary); }
+      .gkb-rel-zoom-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column;
+        gap: 8px; overflow: hidden; }
+      .gkb-rel-zoom-graph { flex: 1 1 auto; min-height: 0; display: flex; align-items: center;
+        justify-content: center; overflow: auto; }
+      .gkb-rel-zoom-graph .gkb-graph-svg { width: 100%; height: 100%; max-height: 100%; }
+      .gkb-rel-zoom-actions { flex: none; display: flex; justify-content: flex-end; gap: 8px; }
       .gkb-link { display: inline-flex; align-items: center; gap: 4px; font-size: 11px;
         color: var(--dsw-alias-brand-primary); text-decoration: none; }
       .gkb-link:hover { text-decoration: underline; }
@@ -464,6 +490,8 @@ window.__ModuleLoader__.load({
       refresh: 'M12.5 8a4.5 4.5 0 1 1-1.3-3.1M12.8 2.6v2.9h-2.9',
       external: 'M9 3.5h3.5V7M12.5 3.5L8 8M11 9v3.5H3.5V5H7',
       filter: 'M2.5 3.5h11l-4.1 4.9v4.1l-2.8-1.3V8.4L2.5 3.5z',
+      expand: 'M6 2.5H2.5V6M10 2.5h3.5V6M6 13.5H2.5V10M10 13.5h3.5V10',
+      collapse: 'M2.5 6H6V2.5M13.5 6H10V2.5M2.5 10H6v3.5M13.5 10H10v3.5',
     }
 
     // ------------------------------------------------------------------
@@ -1547,6 +1575,8 @@ window.__ModuleLoader__.load({
       const repo = typeof props.repo === 'string' ? props.repo : ''
       const runAction = typeof props.runAction === 'function' ? props.runAction : null
       const onSelectIssue = typeof props.onSelectIssue === 'function' ? props.onSelectIssue : null
+      const relationsZoomed = props.relationsZoomed === true
+      const onZoomRelations = typeof props.onZoomRelations === 'function' ? props.onZoomRelations : null
 
       const [graph, setGraph] = useState(null)
       const [graphLoading, setGraphLoading] = useState(false)
@@ -1614,6 +1644,7 @@ window.__ModuleLoader__.load({
       }, [number])
 
       const graphLayout = useMemo(() => computeGraphLayout(graph), [graph])
+      const relationsReady = graphLayout !== null && graphLayout.nodes.length > 1 && graphLayout.edges.length > 0
 
       const presentKinds = useMemo(() => {
         const kinds = new Set()
@@ -1741,7 +1772,17 @@ window.__ModuleLoader__.load({
         : null
 
       const relationSection = h('section', { className: 'gkb-section' },
-        h('h3', { className: 'gkb-section-title' }, t('detail.relations')),
+        h('div', { className: 'gkb-section-head' },
+          h('h3', { className: 'gkb-section-title' }, t('detail.relations')),
+          relationsReady && onZoomRelations !== null
+            ? h('button', {
+              className: 'gkb-btn gkb-zoom-btn',
+              type: 'button',
+              title: t('detail.zoom'),
+              'aria-label': t('detail.zoom'),
+              onClick: () => onZoomRelations(true),
+            }, h(Glyph, { name: 'expand', size: 12 }), h('span', null, t('detail.zoom')))
+            : null),
         number === null
           ? h('div', { className: 'gkb-empty' }, t('detail.relationsEmpty'))
           : graphLoading
@@ -1771,6 +1812,41 @@ window.__ModuleLoader__.load({
                     h('div', { className: 'gkb-rel-list' },
                       graphLayout.edges.map(renderEdgeRow)))),
         truncatedNote)
+
+      // Lifted above the whole frame: only while the relations graph has
+      // content; Escape / backdrop / the restore button return to the panel.
+      const zoomOverlay = relationsZoomed && relationsReady && onZoomRelations !== null
+        ? h('div', { className: 'gkb-rel-zoom', role: 'dialog', 'aria-modal': 'true', 'aria-label': t('detail.relations') },
+          h('div', {
+            className: 'gkb-rel-zoom-backdrop',
+            'aria-hidden': 'true',
+            onClick: () => onZoomRelations(false),
+          }),
+          h('div', { className: 'gkb-rel-zoom-card' },
+            h('div', { className: 'gkb-rel-zoom-head' },
+              h('span', { className: 'gkb-rel-zoom-title' }, (number === null ? '' : '#' + number + ' ') + t('detail.relations')),
+              h('span', { className: 'gkb-rel-zoom-hint' }, t('detail.zoomHint')),
+              h('span', { className: 'gkb-spacer' }),
+              h(IconButton, {
+                icon: 'collapse',
+                label: t('detail.shrink'),
+                title: t('detail.shrink'),
+                onClick: () => onZoomRelations(false),
+              })),
+            h('div', { className: 'gkb-rel-zoom-body' },
+              h('div', { className: 'gkb-graph gkb-rel-zoom-graph' }, h(RelationGraph, {
+                t,
+                layout: graphLayout,
+                onSelectIssue,
+              })),
+              legend),
+            h('div', { className: 'gkb-rel-zoom-actions' },
+              h('button', {
+                className: 'gkb-btn',
+                type: 'button',
+                onClick: () => onZoomRelations(false),
+              }, h(Glyph, { name: 'collapse' }), h('span', null, t('detail.shrink'))))))
+        : null
 
       const body = number === null
         ? h('div', { className: 'gkb-detail-body' },
@@ -1841,6 +1917,7 @@ window.__ModuleLoader__.load({
       return h('aside', {
         className: 'gkb-detail',
         'data-open': open ? 'true' : 'false',
+        'data-zoomed': relationsZoomed && relationsReady ? 'true' : 'false',
         'aria-hidden': open ? 'false' : 'true',
         'aria-label': t('detail.title'),
       },
@@ -1856,7 +1933,8 @@ window.__ModuleLoader__.load({
           title: t('detail.close'),
           onClick: close,
         })),
-      body)
+      body,
+      zoomOverlay)
     }
 
     // ------------------------------------------------------------------
@@ -1884,6 +1962,7 @@ window.__ModuleLoader__.load({
       const [repoDraft, setRepoDraft] = useState(null)
       const [selected, setSelected] = useState(null)
       const [panelOpen, setPanelOpen] = useState(false)
+      const [relationsZoomed, setRelationsZoomed] = useState(false)
       const [labelFilters, setLabelFilters] = useState([])
       const [filterOpen, setFilterOpen] = useState(false)
       const [pickerRow, setPickerRow] = useState(null)
@@ -1981,11 +2060,15 @@ window.__ModuleLoader__.load({
       useEffect(() => {
         if (!panelOpen) return undefined
         const onKeyDown = (event) => {
-          if (event.key === 'Escape') setPanelOpen(false)
+          if (event.key !== 'Escape') return
+          // The enlarged relations layer sits above the panel: Escape first
+          // returns it to the in-panel size, then a second Escape closes panel.
+          if (relationsZoomed) setRelationsZoomed(false)
+          else setPanelOpen(false)
         }
         document.addEventListener('keydown', onKeyDown)
         return () => document.removeEventListener('keydown', onKeyDown)
-      }, [panelOpen])
+      }, [panelOpen, relationsZoomed])
 
       useEffect(() => {
         if (!adding) return undefined
@@ -2158,6 +2241,7 @@ window.__ModuleLoader__.load({
       const openIssue = (number) => {
         if (number === null) return
         if (panelOpen && selected === number) {
+          setRelationsZoomed(false)
           setPanelOpen(false)
           return
         }
@@ -2736,7 +2820,12 @@ window.__ModuleLoader__.load({
             groups: sortedGroups,
             repo,
             runAction,
-            onClose: () => setPanelOpen(false),
+            relationsZoomed,
+            onZoomRelations: (next) => setRelationsZoomed(next === true),
+            onClose: () => {
+              setRelationsZoomed(false)
+              setPanelOpen(false)
+            },
             onSelectIssue: openIssue,
           })))
     }
