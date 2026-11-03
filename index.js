@@ -15,6 +15,11 @@ const LOGIN_TTL_MS = 3_600_000
 const GH_TIMEOUT_MS = 25_000
 const GIT_TIMEOUT_MS = 4_000
 const SESSION_REPO_TTL_MS = 60_000
+const LINKED_TTL_MS = 30_000
+const LINKED_BODY_LIMIT = 12_000
+const LINKED_COMMENT_LIMIT = 20
+const LINKED_COMMENT_BODY_LIMIT = 4_000
+const LINKED_ISSUE_LIMIT = 3
 const OPEN_STATE_QUERY = 'state=open'
 const SCOPE_MINE = 'mine'
 const SCOPE_ALL = 'all'
@@ -595,6 +600,224 @@ export function apply(ctx, config) {
     sessionRepoCache.set(sessionId, { repo, at: Date.now() })
     return repo
   }
+  // ------------------------------------------------------------------
+  // Session ↔ GitHub issue/PR linkage for the conversation GitHub view
+  // ------------------------------------------------------------------
+  const linkedCache = new Map()
+  function bodyExcerpt(value, limit) {
+    if (typeof value !== 'string') return ''
+    return value.length > limit ? `${value.slice(0, limit)}…` : value
+  }
+  async function sessionProject(sessionId) {
+    const sessions = ctx.get('sessions')
+    const session = sessions !== undefined && typeof sessions.get === 'function' ? sessions.get(sessionId) : undefined
+    if (session === undefined || session === null) return null
+    let cwd = ''
+    try {
+      const workingDirectory = ctx.get('workingDirectory')
+      if (workingDirectory !== undefined && typeof workingDirectory.get === 'function') cwd = workingDirectory.get(session) ?? ''
+    } catch (error) {
+      void error
+    }
+    if (cwd === '' && typeof session.header?.cwd === 'string') cwd = session.header.cwd
+    let branch = ''
+    if (cwd !== '') {
+      try {
+        branch = (await runGit(['-C', cwd, 'rev-parse', '--abbrev-ref', 'HEAD'])).trim()
+      } catch (error) {
+        void error
+      }
+    }
+    const repo = cwd === '' ? null : await resolveRepoOfSession(sessionId)
+    return { repo, cwd, branch }
+  }
+  async function fetchLinkedComments(repo, number) {
+    const raw = await fetchRawOrNull(['api', `repos/${repo}/issues/${number}/comments?per_page=100`])
+    if (!Array.isArray(raw)) return []
+    return raw.slice(-LINKED_COMMENT_LIMIT).map((comment) => ({
+      id: Number(comment?.id) || 0,
+      author: typeof comment?.user?.login === 'string' ? comment.user.login : '',
+      body: bodyExcerpt(comment?.body, LINKED_COMMENT_BODY_LIMIT),
+      createdAt: typeof comment?.created_at === 'string' ? comment.created_at : null,
+    }))
+  }
+  async function fetchLinkedThread(repo, number) {
+    const raw = await fetchRawOrNull(['api', `repos/${repo}/issues/${number}`])
+    if (raw === null || typeof raw !== 'object' || Number(raw.number) !== number) return null
+    const isPr = raw.pull_request !== undefined && raw.pull_request !== null
+    const comments = await fetchLinkedComments(repo, number)
+    let pull = null
+    if (isPr) {
+      const prRaw = await fetchRawOrNull(['api', `repos/${repo}/pulls/${number}`])
+      if (prRaw !== null && typeof prRaw === 'object') {
+        pull = {
+          base: typeof prRaw.base?.ref === 'string' ? prRaw.base.ref : '',
+          head: typeof prRaw.head?.ref === 'string' ? prRaw.head.ref : '',
+          merged: prRaw.merged === true,
+          draft: prRaw.draft === true,
+          additions: Number(prRaw.additions) || 0,
+          deletions: Number(prRaw.deletions) || 0,
+          changedFiles: Number(prRaw.changed_files) || 0,
+        }
+      }
+    }
+    return {
+      kind: isPr ? 'pr' : 'issue',
+      number,
+      title: typeof raw.title === 'string' ? raw.title : '',
+      state: String(raw.state ?? '').toUpperCase() === 'CLOSED' ? 'CLOSED' : 'OPEN',
+      url: typeof raw.html_url === 'string' ? raw.html_url : `https://github.com/${repo}/issues/${number}`,
+      author: typeof raw.user?.login === 'string' ? raw.user.login : '',
+      labels: (Array.isArray(raw.labels) ? raw.labels : [])
+        .filter((label) => typeof label?.name === 'string')
+        .map((label) => ({ name: label.name, color: typeof label.color === 'string' ? label.color : '' })),
+      body: bodyExcerpt(raw.body, LINKED_BODY_LIMIT),
+      createdAt: typeof raw.created_at === 'string' ? raw.created_at : null,
+      updatedAt: typeof raw.updated_at === 'string' ? raw.updated_at : null,
+      comments,
+      commentsTotal: Number(raw.comments) || comments.length,
+      pull,
+    }
+  }
+  function linkedIssueNumbersFromText(text) {
+    if (typeof text !== 'string' || text === '') return []
+    const numbers = []
+    const pattern = /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|关联|修复|关闭)\s*[:：]?\s*#(\d{1,6})/gi
+    let match = pattern.exec(text)
+    while (match !== null) {
+      const number = Number(match[1])
+      if (Number.isInteger(number) && number > 0 && !numbers.includes(number)) numbers.push(number)
+      match = pattern.exec(text)
+    }
+    return numbers
+  }
+  function branchIssueCandidates(branch) {
+    if (typeof branch !== 'string' || branch === '') return []
+    const found = []
+    const patterns = [
+      /(?:^|[^A-Za-z0-9])issue[-_/ ]?(\d{1,6})(?![0-9])/i,
+      /(?:^|[^A-Za-z0-9])(\d{3,6})(?:[-_/ ]|$)/,
+    ]
+    for (const pattern of patterns) {
+      const match = branch.match(pattern)
+      if (match === null) continue
+      const number = Number(match[1])
+      if (Number.isInteger(number) && number > 0 && !found.includes(number)) found.push(number)
+    }
+    return found
+  }
+  async function branchCommitIssueNumbers(cwd) {
+    if (typeof cwd !== 'string' || cwd === '') return []
+    try {
+      const log = await runGit(['-C', cwd, 'log', '--pretty=%s', '-8'])
+      const numbers = []
+      const pattern = /#(\d{2,6})/g
+      let match = pattern.exec(log)
+      while (match !== null) {
+        const number = Number(match[1])
+        if (Number.isInteger(number) && number > 0 && !numbers.includes(number)) numbers.push(number)
+        match = pattern.exec(log)
+      }
+      return numbers
+    } catch (error) {
+      void error
+      return []
+    }
+  }
+  async function linkedForSession(sessionId, force) {
+    const missing = { associated: false, repo: '', cwd: '', branch: '', reason: 'no-session', issues: [], prs: [], fetchedAt: Date.now() }
+    if (typeof sessionId !== 'string' || sessionId === '') return missing
+    const cached = linkedCache.get(sessionId)
+    if (force !== true && cached !== undefined && Date.now() - cached.fetchedAt < LINKED_TTL_MS) return cached
+    const project = await sessionProject(sessionId)
+    if (project === null) return { ...missing, fetchedAt: Date.now() }
+    const { repo, cwd, branch } = project
+    if (repo === null || repo === '') {
+      const payload = { associated: false, repo: '', cwd, branch, reason: cwd === '' ? 'no-workdir' : 'no-github-remote', issues: [], prs: [], fetchedAt: Date.now() }
+      linkedCache.set(sessionId, payload)
+      return payload
+    }
+    let prNumber = null
+    try {
+      const list = await ghJson(['pr', 'list', '--repo', repo, '--head', branch, '--state', 'all', '--limit', '5', '--json', 'number,state,title,url,isDraft,mergedAt'])
+      if (Array.isArray(list) && list.length > 0) {
+        const preferred = list.find((item) => item.state === 'OPEN') ?? list[0]
+        prNumber = Number(preferred.number)
+      }
+    } catch (error) {
+      void error
+    }
+    const issueNumbers = []
+    const addIssue = (value) => {
+      const number = Number(value)
+      if (!Number.isInteger(number) || number <= 0) return
+      if (number === prNumber || issueNumbers.includes(number)) return
+      if (issueNumbers.length >= LINKED_ISSUE_LIMIT) return
+      issueNumbers.push(number)
+    }
+    if (prNumber !== null) {
+      try {
+        const meta = await ghJson(['pr', 'view', String(prNumber), '--repo', repo, '--json', 'closingIssuesReferences,body'])
+        if (meta !== null && typeof meta === 'object') {
+          for (const reference of Array.isArray(meta.closingIssuesReferences) ? meta.closingIssuesReferences : []) addIssue(reference?.number)
+          for (const number of linkedIssueNumbersFromText(meta.body)) addIssue(number)
+        }
+      } catch (error) {
+        void error
+      }
+    }
+    for (const number of branchIssueCandidates(branch)) addIssue(number)
+    for (const number of await branchCommitIssueNumbers(cwd)) addIssue(number)
+    const [prItems, issueItems] = await Promise.all([
+      prNumber === null ? Promise.resolve([]) : fetchLinkedThread(repo, prNumber).then((item) => (item === null ? [] : [item])).catch(() => []),
+      Promise.all(issueNumbers.map((number) => fetchLinkedThread(repo, number).then((item) => (item !== null && item.kind === 'issue' ? item : null)).catch(() => null))),
+    ])
+    const issues = issueItems.filter((item) => item !== null)
+    const prs = prItems.filter((item) => item !== null)
+    const payload = {
+      associated: issues.length + prs.length > 0,
+      repo,
+      cwd,
+      branch,
+      reason: issues.length + prs.length > 0 ? null : 'no-link',
+      issues,
+      prs,
+      fetchedAt: Date.now(),
+    }
+    linkedCache.set(sessionId, payload)
+    return payload
+  }
+  async function inspectLinkedNumber(sessionId, number) {
+    if (!Number.isInteger(number) || number <= 0) throw httpError('编号不正确', 400)
+    const project = await sessionProject(sessionId)
+    if (project === null) throw httpError('会话不在当前进程中', 404)
+    if (project.repo === null || project.repo === '') throw httpError('当前工作目录没有关联 GitHub 仓库', 400)
+    const item = await fetchLinkedThread(project.repo, number)
+    if (item === null) throw httpError(`#${number} 不存在或无权访问`, 404)
+    return { ...item, repo: project.repo, branch: project.branch }
+  }
+  async function commentOnThread(body) {
+    const sessionId = typeof body?.sessionId === 'string' ? body.sessionId : ''
+    const number = Number(body?.number)
+    const text = typeof body?.body === 'string' ? body.body.trim() : ''
+    if (text === '') return failure('回复内容不能为空', 400)
+    if (text.length > 60_000) return failure('回复内容过长', 400)
+    if (!Number.isInteger(number) || number <= 0) return failure('编号不正确', 400)
+    const project = await sessionProject(sessionId)
+    if (project === null) return failure('会话不在当前进程中', 404)
+    if (project.repo === null || project.repo === '') return failure('当前工作目录没有关联 GitHub 仓库', 400)
+    const raw = await ghJson(['api', '-X', 'POST', `repos/${project.repo}/issues/${number}/comments`, '-f', `body=${text}`])
+    linkedCache.delete(sessionId)
+    const comment = raw !== null && typeof raw === 'object'
+      ? {
+          id: Number(raw.id) || 0,
+          author: typeof raw.user?.login === 'string' ? raw.user.login : '',
+          body: typeof raw.body === 'string' ? raw.body : text,
+          createdAt: typeof raw.created_at === 'string' ? raw.created_at : null,
+        }
+      : { id: 0, author: '', body: text, createdAt: null }
+    return success({ comment, repo: project.repo, number })
+  }
   async function applyActiveSession(sessionId) {
     if (typeof sessionId !== 'string' || sessionId.trim() === '') return { changed: false, repo: state.repo, switched: false }
     const nextSessionId = sessionId.trim()
@@ -913,6 +1136,7 @@ export function apply(ctx, config) {
     claim: (body) => claimOperation({ taskId: body.taskId, group: body.group, by: body.by }),
     complete: (body) => completeOperation(body.taskId),
     activeSession: async (body) => applyActiveSession(typeof body.sessionId === 'string' ? body.sessionId : ''),
+    comment: async (body) => commentOnThread(body),
     filter: (body) => scopeOperation(body.scope),
     refresh: async () => {
       await refreshIssues()
@@ -940,6 +1164,35 @@ export function apply(ctx, config) {
       }
       if (request.method === 'GET') {
         const url = new URL(request.url ?? ROUTE, 'http://localhost')
+        const linkedToken = url.searchParams.get('linked')
+        if (linkedToken !== null) {
+          const linkedSession = url.searchParams.get('session') ?? ''
+          if (linkedSession === '') {
+            sendJson(response, 400, { error: '缺少 session' })
+            return
+          }
+          try {
+            sendJson(response, 200, await linkedForSession(linkedSession, url.searchParams.get('refresh') === '1'))
+          } catch (error) {
+            sendJson(response, 502, { error: describeError(error) })
+          }
+          return
+        }
+        const inspectToken = url.searchParams.get('inspect')
+        if (inspectToken !== null) {
+          const inspectSession = url.searchParams.get('session') ?? ''
+          if (inspectSession === '') {
+            sendJson(response, 400, { error: '缺少 session' })
+            return
+          }
+          const inspectNumber = Number(inspectToken)
+          try {
+            sendJson(response, 200, await inspectLinkedNumber(inspectSession, inspectNumber))
+          } catch (error) {
+            sendJson(response, typeof error?.status === 'number' ? error.status : 502, { error: describeError(error) })
+          }
+          return
+        }
         // The Client reports the Session it last showed in the conversation
         // panel. Every board read follows that project when it maps to a
         // GitHub repository; a project without one leaves the repo alone.
