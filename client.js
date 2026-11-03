@@ -244,6 +244,43 @@ window.__ModuleLoader__.load({
     // Component-local CSS (one <style> rendered by the page component)
     // ------------------------------------------------------------------
 
+
+    const MARKDOWN_CSS = `
+      .gkb-md { display: flex; flex-direction: column; gap: 8px; }
+      .gkb-md > * { margin: 0; max-width: 100%; }
+      .gkb-md p { margin: 0; }
+      .gkb-md h1, .gkb-md h2, .gkb-md h3, .gkb-md h4, .gkb-md h5, .gkb-md h6 {
+        margin: 0; font-weight: 600; color: var(--dsw-alias-label-primary); }
+      .gkb-md h1 { font-size: 16px; line-height: 22px; }
+      .gkb-md h2 { font-size: 15px; line-height: 21px; }
+      .gkb-md h3 { font-size: 14px; line-height: 20px; }
+      .gkb-md h4, .gkb-md h5, .gkb-md h6 { font-size: 13px; line-height: 19px; }
+      .gkb-md ul, .gkb-md ol { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; }
+      .gkb-md li { margin: 0; }
+      .gkb-md blockquote { margin: 0; padding: 4px 8px; border-left: 2px solid var(--dsw-alias-border-l2);
+        color: var(--dsw-alias-label-secondary); }
+      .gkb-md code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px;
+        padding: 1px 4px; border-radius: 4px; background: var(--dsw-alias-bg-layer-2);
+        color: var(--dsw-alias-label-primary); }
+      .gkb-md pre { margin: 0; padding: 8px; border-radius: 8px; background: var(--dsw-alias-bg-base);
+        border: 1px solid var(--dsw-alias-border-l1); overflow-x: auto; }
+      .gkb-md pre code { background: transparent; padding: 0; font-size: 11px; line-height: 16px; white-space: pre; }
+      .gkb-md a { color: var(--dsw-alias-brand-primary); text-decoration: none; }
+      .gkb-md a:hover { text-decoration: underline; }
+      .gkb-md hr { border: none; border-top: 1px solid var(--dsw-alias-border-l1); margin: 4px 0; }
+      .gkb-md table { border-collapse: collapse; width: 100%; font-size: 11px; }
+      .gkb-md th, .gkb-md td { border: 1px solid var(--dsw-alias-border-l1); padding: 4px 6px;
+        text-align: left; vertical-align: top; }
+      .gkb-md th { background: var(--dsw-alias-bg-layer-2); font-weight: 600; }
+      .gkb-md strong { color: var(--dsw-alias-label-primary); }
+      .gkb-md img { max-width: 100%; }
+      .gkb-md-task { display: inline-flex; align-items: center; gap: 4px; }
+      .gkb-md-task-box { display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+        border: 1px solid var(--dsw-alias-border-l2); }
+      .gkb-md-task-box[data-checked="true"] { background: var(--dsw-alias-brand-primary);
+        border-color: var(--dsw-alias-brand-primary); }
+    `
+
     const CSS = `
       .gkb-root { position: relative; display: flex; flex-direction: column; height: 100%; min-height: 360px;
         box-sizing: border-box; overflow: hidden; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary);
@@ -461,9 +498,10 @@ window.__ModuleLoader__.load({
         color: var(--dsw-alias-brand-primary); text-decoration: none; }
       .gkb-link:hover { text-decoration: underline; }
       .gkb-link:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
-      .gkb-body-text { max-height: 150px; overflow-y: auto; padding: 8px; border-radius: 8px;
+      .gkb-body-text { max-height: 260px; overflow-y: auto; padding: 8px; border-radius: 8px;
         border: 1px solid var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-base); font-size: 12px;
-        line-height: 18px; color: var(--dsw-alias-label-secondary); white-space: pre-wrap; word-break: break-word; }
+        line-height: 18px; color: var(--dsw-alias-label-secondary); word-break: break-word; }
+      .gkb-body-text .gkb-md { color: var(--dsw-alias-label-secondary); }
       .gkb-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
       .gkb-select { height: 24px; max-width: 100%; padding: 0 6px; border-radius: 6px;
         border: 1px solid var(--dsw-alias-border-l2); background: var(--dsw-alias-bg-base);
@@ -523,6 +561,7 @@ window.__ModuleLoader__.load({
         .gkb-edge-line, .gkb-legend-dash, .gkb-sk-bar, .gkb-sk-block { animation: none; }
         .gkb-detail, .gkb-detail[data-open="true"] { transition: none; }
       }
+      ${MARKDOWN_CSS}
     `
 
     const VIEW_CSS = `
@@ -595,10 +634,10 @@ window.__ModuleLoader__.load({
       .gkb-view-label-dot { width: 5px; height: 5px; border-radius: 50%; flex: none;
         background: var(--dsw-alias-label-secondary); }
       .gkb-view-label-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .gkb-view-body { max-height: 220px; overflow-y: auto; padding: 8px; border-radius: 8px;
+      .gkb-view-body { max-height: 240px; overflow-y: auto; padding: 8px; border-radius: 8px;
         border: 1px solid var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-base);
         font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary);
-        white-space: pre-wrap; word-break: break-word; }
+        word-break: break-word; }
       .gkb-view-muted { color: var(--dsw-alias-label-secondary); }
       .gkb-view-comments { display: flex; flex-direction: column; gap: 6px; }
       .gkb-view-section-title { margin: 0; font-size: 11px; font-weight: 600; letter-spacing: .02em;
@@ -609,7 +648,7 @@ window.__ModuleLoader__.load({
       .gkb-view-comment-meta { display: flex; gap: 8px; margin-bottom: 4px; font-size: 10px;
         color: var(--dsw-alias-label-secondary); }
       .gkb-view-comment-body { font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary);
-        white-space: pre-wrap; word-break: break-word; }
+        word-break: break-word; }
       .gkb-view-reply { display: flex; flex-direction: column; gap: 6px; }
       .gkb-view-textarea { width: 100%; min-height: 60px; resize: vertical; padding: 8px; border-radius: 8px;
         border: 1px solid var(--dsw-alias-border-l2); background: var(--dsw-alias-bg-base);
@@ -625,6 +664,7 @@ window.__ModuleLoader__.load({
         color: var(--dsw-alias-label-secondary); white-space: pre-wrap; }
       .gkb-view-empty-form { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
       @media (prefers-reduced-motion: reduce) { .gkb-view-root * { transition: none !important; } }
+      ${MARKDOWN_CSS}
     `
 
     // ------------------------------------------------------------------
@@ -686,6 +726,261 @@ window.__ModuleLoader__.load({
       return text.replace(/\{(\w+)\}/g, (match, name) => (
         typeof vars[name] === 'string' || typeof vars[name] === 'number' ? String(vars[name]) : match
       ))
+    }
+
+    // ------------------------------------------------------------------
+    // Minimal safe Markdown renderer (GFM-ish subset; never uses innerHTML)
+    // ------------------------------------------------------------------
+
+    function mdSafeHref(value) {
+      if (typeof value !== 'string') return null
+      const url = value.trim()
+      if (url === '') return null
+      if (/^https?:\/\//i.test(url) || /^mailto:/i.test(url) || url.startsWith('/') || url.startsWith('#')) return url
+      return null
+    }
+
+    function mdSplitRow(row) {
+      return String(row)
+        .replace(/^\s*\|/, '')
+        .replace(/\|\s*$/, '')
+        .split('|')
+        .map((cell) => cell.trim())
+    }
+
+    function parseMarkdownBlocks(text) {
+      const lines = String(text === null || text === undefined ? '' : text).replace(/\r\n?/g, '\n').split('\n')
+      const blocks = []
+      let paragraph = []
+      let index = 0
+      const flushParagraph = () => {
+        if (paragraph.length === 0) return
+        blocks.push({ type: 'paragraph', text: paragraph.join('\n') })
+        paragraph = []
+      }
+      while (index < lines.length) {
+        const line = lines[index]
+        if (/^\s*$/.test(line)) {
+          flushParagraph()
+          index += 1
+          continue
+        }
+        const fence = /^\s*```\s*([A-Za-z0-9_+#.-]*)\s*$/.exec(line)
+        if (fence !== null) {
+          flushParagraph()
+          const code = []
+          index += 1
+          while (index < lines.length && /^\s*```\s*$/.test(lines[index]) === false) {
+            code.push(lines[index])
+            index += 1
+          }
+          if (index < lines.length) index += 1
+          blocks.push({ type: 'code', lang: fence[1], text: code.join('\n') })
+          continue
+        }
+        const heading = /^(#{1,6})\s+(.*)$/.exec(line)
+        if (heading !== null) {
+          flushParagraph()
+          blocks.push({ type: 'heading', level: heading[1].length, text: heading[2] })
+          index += 1
+          continue
+        }
+        if (/^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/.test(line)) {
+          flushParagraph()
+          blocks.push({ type: 'hr' })
+          index += 1
+          continue
+        }
+        if (/^\s{0,3}>\s?/.test(line)) {
+          flushParagraph()
+          const quote = []
+          while (index < lines.length && /^\s{0,3}>\s?/.test(lines[index])) {
+            quote.push(lines[index].replace(/^\s{0,3}>\s?/, ''))
+            index += 1
+          }
+          blocks.push({ type: 'quote', text: quote.join('\n') })
+          continue
+        }
+        const nextLine = index + 1 < lines.length ? lines[index + 1] : ''
+        if (line.indexOf('|') !== -1 && nextLine.indexOf('-') !== -1
+          && /^\s*\|?\s*:?-{2,}[-\s|:]*$/.test(nextLine)) {
+          flushParagraph()
+          const header = mdSplitRow(line)
+          index += 2
+          const rows = []
+          while (index < lines.length && lines[index].indexOf('|') !== -1 && /^\s*$/.test(lines[index]) === false) {
+            rows.push(mdSplitRow(lines[index]))
+            index += 1
+          }
+          blocks.push({ type: 'table', header, rows })
+          continue
+        }
+        const listItem = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/.exec(line)
+        if (listItem !== null) {
+          flushParagraph()
+          const ordered = /^\d/.test(listItem[2])
+          const items = []
+          while (index < lines.length) {
+            const itemMatch = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/.exec(lines[index])
+            if (itemMatch === null) {
+              if (items.length > 0 && /^\s{2,}\S/.test(lines[index])) {
+                items[items.length - 1].text += '\n' + lines[index].trim()
+                index += 1
+                continue
+              }
+              break
+            }
+            items.push({ text: itemMatch[3], indent: itemMatch[1].length })
+            index += 1
+          }
+          blocks.push({ type: ordered ? 'ol' : 'ul', items })
+          continue
+        }
+        paragraph.push(line)
+        index += 1
+      }
+      flushParagraph()
+      return blocks
+    }
+
+    function renderMarkdownInline(text, keyBase) {
+      const nodes = []
+      let buffer = ''
+      let index = 0
+      let keySeq = 0
+      const nextKey = () => keyBase + ':' + (keySeq++)
+      const flush = () => {
+        if (buffer === '') return
+        nodes.push(buffer)
+        buffer = ''
+      }
+      while (index < text.length) {
+        const rest = text.slice(index)
+        const char = text[index]
+        if (char === '\\' && index + 1 < text.length) {
+          buffer += text[index + 1]
+          index += 2
+          continue
+        }
+        if (char === '\n') {
+          flush()
+          nodes.push(h('br', { key: nextKey() }))
+          index += 1
+          continue
+        }
+        let match = /^`([^`\n]+)`/.exec(rest)
+        if (match !== null) {
+          flush()
+          nodes.push(h('code', { key: nextKey() }, match[1]))
+          index += match[0].length
+          continue
+        }
+        match = /^!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/.exec(rest)
+        if (match !== null) {
+          const href = mdSafeHref(match[2])
+          const label = '🖼 ' + (match[1] !== '' ? match[1] : match[2])
+          flush()
+          nodes.push(href === null
+            ? h('span', { key: nextKey() }, label)
+            : h('a', { key: nextKey(), className: 'gkb-md-image', href, target: '_blank', rel: 'noreferrer' }, label))
+          index += match[0].length
+          continue
+        }
+        match = /^\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/.exec(rest)
+        if (match !== null) {
+          const href = mdSafeHref(match[2])
+          const label = renderMarkdownInline(match[1], keyBase + 'k' + keySeq)
+          flush()
+          nodes.push(href === null
+            ? h('span', { key: nextKey() }, label)
+            : h('a', { key: nextKey(), href, target: '_blank', rel: 'noreferrer' }, label))
+          index += match[0].length
+          continue
+        }
+        match = /^(\*\*|__)([\s\S]+?)\1/.exec(rest)
+        if (match !== null) {
+          flush()
+          nodes.push(h('strong', { key: nextKey() }, renderMarkdownInline(match[2], keyBase + 's' + keySeq)))
+          index += match[0].length
+          continue
+        }
+        match = /^~~([\s\S]+?)~~/.exec(rest)
+        if (match !== null) {
+          flush()
+          nodes.push(h('del', { key: nextKey() }, renderMarkdownInline(match[1], keyBase + 'd' + keySeq)))
+          index += match[0].length
+          continue
+        }
+        match = /^(\*|_)([^*_\n]+?)\1/.exec(rest)
+        if (match !== null && (match[1] === '*' || index === 0 || /[^A-Za-z0-9]/.test(text[index - 1]))) {
+          flush()
+          nodes.push(h('em', { key: nextKey() }, renderMarkdownInline(match[2], keyBase + 'e' + keySeq)))
+          index += match[0].length
+          continue
+        }
+        match = /^<((?:https?:\/\/)[^>\s]+)>/.exec(rest)
+        if (match !== null) {
+          flush()
+          nodes.push(h('a', { key: nextKey(), href: match[1], target: '_blank', rel: 'noreferrer' }, match[1]))
+          index += match[0].length
+          continue
+        }
+        match = /^(https?:\/\/[^\s<>()]+[^\s<>().,;:!?])/.exec(rest)
+        if (match !== null) {
+          flush()
+          nodes.push(h('a', { key: nextKey(), href: match[1], target: '_blank', rel: 'noreferrer' }, match[1]))
+          index += match[0].length
+          continue
+        }
+        buffer += char
+        index += 1
+      }
+      flush()
+      return nodes
+    }
+
+    function renderMarkdownBlocks(blocks, keyBase) {
+      return blocks.map((block, index) => {
+        const key = keyBase + 'b' + index
+        if (block.type === 'paragraph') return h('p', { key }, renderMarkdownInline(block.text, key + 'i'))
+        if (block.type === 'heading') return h('h' + block.level, { key }, renderMarkdownInline(block.text, key + 'i'))
+        if (block.type === 'code') return h('pre', { key }, h('code', null, block.text))
+        if (block.type === 'hr') return h('hr', { key })
+        if (block.type === 'quote') {
+          return h('blockquote', { key }, renderMarkdownBlocks(parseMarkdownBlocks(block.text), key + 'q'))
+        }
+        if (block.type === 'table') {
+          return h('table', { key },
+            h('thead', null, h('tr', null, block.header.map((cell, cellIndex) => h('th', {
+              key: cellIndex,
+            }, renderMarkdownInline(cell, key + 'h' + cellIndex))))),
+            h('tbody', null, block.rows.map((row, rowIndex) => h('tr', { key: rowIndex },
+              row.map((cell, cellIndex) => h('td', { key: cellIndex },
+                renderMarkdownInline(cell !== undefined ? cell : '', key + 'r' + rowIndex + 'c' + cellIndex)))))))
+        }
+        if (block.type === 'ul' || block.type === 'ol') {
+          const Tag = block.type === 'ol' ? 'ol' : 'ul'
+          return h(Tag, { key }, block.items.map((item, itemIndex) => {
+            const taskMatch = /^\[( |x|X)\]\s+([\s\S]*)$/.exec(item.text)
+            if (taskMatch !== null) {
+              const checked = taskMatch[1].toLowerCase() === 'x'
+              return h('li', { key: itemIndex },
+                h('span', { className: 'gkb-md-task' },
+                  h('span', { className: 'gkb-md-task-box', 'data-checked': checked ? 'true' : 'false', 'aria-hidden': 'true' }),
+                  h('span', null, renderMarkdownInline(taskMatch[2], key + 't' + itemIndex))))
+            }
+            return h('li', { key: itemIndex }, renderMarkdownInline(item.text, key + 'i' + itemIndex))
+          }))
+        }
+        return null
+      }).filter((node) => node !== null)
+    }
+
+    function renderMarkdown(text, extraClassName) {
+      const blocks = parseMarkdownBlocks(text)
+      if (blocks.length === 0) return null
+      const className = 'gkb-md' + (typeof extraClassName === 'string' && extraClassName !== '' ? ' ' + extraClassName : '')
+      return h('div', { className }, renderMarkdownBlocks(blocks, 'md'))
     }
 
     function toNumber(value) {
@@ -1885,6 +2180,9 @@ window.__ModuleLoader__.load({
         : focusNode !== null && focusNode.state === 'CLOSED' ? 'CLOSED' : 'OPEN'
       const labels = issue !== null && Array.isArray(issue.labels) ? issue.labels.slice(0, 8) : []
       const excerpt = issue !== null && typeof issue.bodyExcerpt === 'string' ? issue.bodyExcerpt : ''
+      const detailBody = graph !== null && typeof graph.body === 'string' && graph.body.trim() !== ''
+        ? graph.body
+        : excerpt
       const metaItems = []
       if (issue !== null && typeof issue.author === 'string' && issue.author !== '') {
         metaItems.push('@' + issue.author)
@@ -2041,7 +2339,7 @@ window.__ModuleLoader__.load({
             : null,
           h('section', { className: 'gkb-section' },
             h('h3', { className: 'gkb-section-title' }, t('detail.body')),
-            h('div', { className: 'gkb-body-text' }, excerpt !== '' ? excerpt : t('detail.bodyEmpty'))),
+            h('div', { className: 'gkb-body-text' }, detailBody !== '' ? renderMarkdown(detailBody) : t('detail.bodyEmpty'))),
           h('section', { className: 'gkb-section' },
             h('h3', { className: 'gkb-section-title' }, t('detail.group')),
             h('div', { className: 'gkb-actions' },
@@ -2261,8 +2559,8 @@ window.__ModuleLoader__.load({
               style: labelColour(label.color) !== '' ? { background: labelColour(label.color) } : undefined,
             }), h('span', { className: 'gkb-view-label-name' }, label.name))))
             : null,
-          h('div', { className: typeof item.body === 'string' && item.body !== '' ? 'gkb-view-body' : 'gkb-view-body gkb-view-muted' },
-            typeof item.body === 'string' && item.body !== '' ? item.body : t('view.noBody')),
+          h('div', { className: 'gkb-view-body' },
+            typeof item.body === 'string' && item.body !== '' ? renderMarkdown(item.body) : t('view.noBody')),
           h('div', { className: 'gkb-view-comments' },
             h('h3', { className: 'gkb-view-section-title' }, tx(t, 'view.comments', { n: comments.length })
               + (commentsMore ? ' · ' + tx(t, 'view.commentsMore', { n: item.commentsTotal }) : '')),
@@ -2274,7 +2572,8 @@ window.__ModuleLoader__.load({
                   typeof comment.createdAt === 'string' && comment.createdAt !== ''
                     ? h('span', null, formatDateShort(comment.createdAt))
                     : null),
-                h('div', { className: 'gkb-view-comment-body' }, typeof comment.body === 'string' ? comment.body : '')))),
+                h('div', { className: 'gkb-view-comment-body' },
+                  typeof comment.body === 'string' && comment.body !== '' ? renderMarkdown(comment.body) : '')))),
           h('div', { className: 'gkb-view-reply' },
             h('textarea', {
               className: 'gkb-view-textarea',

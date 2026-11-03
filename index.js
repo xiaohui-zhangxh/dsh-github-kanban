@@ -8,7 +8,7 @@ const STATE_FILE = 'github-kanban.state.json'
 const CACHE_FILE = 'github-kanban.cache.json'
 const DEFAULT_REPO = ''
 const REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
-const CACHE_VERSION = 3
+const CACHE_VERSION = 4
 const CACHE_TTL_MS = 300_000
 const RELATION_TTL_MS = 60_000
 const LOGIN_TTL_MS = 3_600_000
@@ -209,7 +209,19 @@ function readDiskCache(repo) {
   const issues = parsed.issues.filter(isCachedIssue).filter((issue) => issue.state !== 'CLOSED')
   if (issues.length === 0) return null
   const bodies = new Map()
-  for (const issue of issues) if (typeof issue.bodyExcerpt === 'string' && issue.bodyExcerpt !== '') bodies.set(issue.number, issue.bodyExcerpt)
+  // v4 caches keep the full bodies (bounded) so relation text-scanning and the
+  // detail Markdown renderer survive a restart; older caches only had excerpts.
+  if (Array.isArray(parsed.bodies)) {
+    for (const entry of parsed.bodies) {
+      if (!Array.isArray(entry) || entry.length < 2) continue
+      const number = Number(entry[0])
+      if (Number.isInteger(number) && typeof entry[1] === 'string' && entry[1] !== '') bodies.set(number, entry[1])
+    }
+  }
+  for (const issue of issues) {
+    if (bodies.has(issue.number)) continue
+    if (typeof issue.bodyExcerpt === 'string' && issue.bodyExcerpt !== '') bodies.set(issue.number, issue.bodyExcerpt)
+  }
   const login = typeof parsed.login === 'string' && parsed.login !== '' ? parsed.login : null
   return { repo, fetchedAt: Number(parsed.fetchedAt) || 0, issues, bodies, truncated: parsed.truncated === true, error: null, login }
 }
@@ -871,7 +883,15 @@ export function apply(ctx, config) {
       : fetched.issues.map((issue) => ({ ...issue, mine: issue.author === login || issue.assignees.includes(login) }))
     issueCache = { repo, fetchedAt: Date.now(), issues, bodies, truncated: fetched.truncated, error: null, login }
     relationCache.clear()
-    writeAtomic(cachePath(), `${JSON.stringify({ version: CACHE_VERSION, repo, fetchedAt: issueCache.fetchedAt, issues: issueCache.issues, truncated: issueCache.truncated, login })}\n`)
+    writeAtomic(cachePath(), `${JSON.stringify({
+      version: CACHE_VERSION,
+      repo,
+      fetchedAt: issueCache.fetchedAt,
+      issues: issueCache.issues,
+      truncated: issueCache.truncated,
+      login,
+      bodies: [...bodies.entries()].map(([number, body]) => [number, bodyExcerpt(body, 100_000)]),
+    })}\n`)
     return issueCache
   }
   const NO_REPO_MESSAGE = '尚未选择仓库：点击看板顶部的仓库名输入 owner/name，或在插件配置里设置 repo；从带 GitHub 关联的聊天项目进入会自动识别'
@@ -985,7 +1005,10 @@ export function apply(ctx, config) {
       const raws = await Promise.all(missing.map((endpoint) => fetchRawOrNull(['api', `repos/${repo}/issues/${endpoint}`])))
       for (const raw of raws) addNode(nodeFromRaw(raw, repo))
     }
-    return assembleGraph(focusNumber, focusNode, nodes, edges)
+    const graph = assembleGraph(focusNumber, focusNode, nodes, edges)
+    // Full body for the detail panel's Markdown renderer (the board cache only
+    // keeps a short plain excerpt).
+    return { ...graph, body: bodyExcerpt(focusBody, 20_000) }
   }
   async function relationsFor(focusNumber) {
     if (state.repo === '') throw new Error(NO_REPO_MESSAGE)
