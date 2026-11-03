@@ -543,8 +543,8 @@ window.__ModuleLoader__.load({
       relates: 'relation.relates',
     }
 
-    const GRAPH_FOCUS = { w: 172, h: 58 }
-    const GRAPH_NODE = { w: 138, h: 48 }
+    const GRAPH_FOCUS = { w: 192, h: 64 }
+    const GRAPH_NODE = { w: 160, h: 60 }
     const GRAPH_PAD = 24
 
     // Kanban column marker palette (artwork colours: they identify groups in
@@ -1400,54 +1400,63 @@ window.__ModuleLoader__.load({
 
         const positions = new Map()
         positions.set(focusNumber, { cx: 0, cy: 0, w: GRAPH_FOCUS.w, h: GRAPH_FOCUS.h, focus: true })
-        const rowGap = 34
-        const stepX = GRAPH_NODE.w + 16
-        const placeRow = (list, cy) => {
+        // Lay neighbours out in small grids instead of a single tall column so
+        // the picture stays wide and fits the detail panel without scrolling.
+        const rowGap = 30
+        const rowStep = GRAPH_NODE.h + 14
+        const colStep = GRAPH_NODE.w + 16
+        const gridColumns = (count) => (count <= 2 ? Math.max(1, count) : 3)
+        const gridHeight = (count, columns) => {
+          const rows = Math.max(1, Math.ceil(count / columns))
+          return rows * GRAPH_NODE.h + (rows - 1) * 14
+        }
+        const placeGrid = (list, topY, columns) => {
           const count = list.length
           for (let index = 0; index < count; index += 1) {
-            const cx = (index - (count - 1) / 2) * stepX
+            const row = Math.floor(index / columns)
+            const column = index % columns
+            const inRow = Math.min(columns, count - row * columns)
             positions.set(list[index].number, {
-              cx, cy, w: GRAPH_NODE.w, h: GRAPH_NODE.h, focus: false,
+              cx: (column - (inRow - 1) / 2) * colStep,
+              cy: topY + row * rowStep + GRAPH_NODE.h / 2,
+              w: GRAPH_NODE.w,
+              h: GRAPH_NODE.h,
+              focus: false,
             })
           }
         }
-        placeRow(pools.parent, -((GRAPH_FOCUS.h / 2) + rowGap + (GRAPH_NODE.h / 2)))
-        placeRow(pools.child, (GRAPH_FOCUS.h / 2) + rowGap + (GRAPH_NODE.h / 2))
+        const parentColumns = gridColumns(pools.parent.length)
+        const parentHeight = pools.parent.length === 0 ? 0 : gridHeight(pools.parent.length, parentColumns)
+        if (pools.parent.length > 0) {
+          placeGrid(pools.parent, -((GRAPH_FOCUS.h / 2) + rowGap + parentHeight), parentColumns)
+        }
+        const childColumns = gridColumns(pools.child.length)
+        const childHeight = pools.child.length === 0 ? 0 : gridHeight(pools.child.length, childColumns)
+        if (pools.child.length > 0) {
+          placeGrid(pools.child, (GRAPH_FOCUS.h / 2) + rowGap, childColumns)
+        }
 
         const sideX = (GRAPH_FOCUS.w / 2) + 24 + (GRAPH_NODE.w / 2)
         const placeColumn = (list, cx) => {
           const count = list.length
           for (let index = 0; index < count; index += 1) {
-            const cy = (index - (count - 1) / 2) * (GRAPH_NODE.h + 12)
-            positions.set(list[index].number, {
-              cx, cy, w: GRAPH_NODE.w, h: GRAPH_NODE.h, focus: false,
-            })
+            const cy = (index - (count - 1) / 2) * rowStep
+            positions.set(list[index].number, { cx, cy, w: GRAPH_NODE.w, h: GRAPH_NODE.h, focus: false })
           }
         }
         placeColumn(pools.blocker, -sideX)
         placeColumn(pools.blocked, sideX)
 
         const stackSpan = (count) => (
-          (count <= 1 ? 0 : ((count - 1) / 2) * (GRAPH_NODE.h + 12)) + (GRAPH_NODE.h / 2)
+          (count <= 1 ? 0 : ((count - 1) / 2) * rowStep) + (GRAPH_NODE.h / 2)
         )
-        const childBottom = (GRAPH_FOCUS.h / 2) + rowGap + GRAPH_NODE.h
-        const bandTop = Math.max(
-          childBottom,
-          stackSpan(pools.blocker.length),
-          stackSpan(pools.blocked.length),
-        ) + 28
-        const relatedX = (GRAPH_FOCUS.w / 2) + 26 + (GRAPH_NODE.w / 2)
-        for (let index = 0; index < pools.related.length; index += 1) {
-          const row = Math.floor(index / 2)
-          const side = index % 2 === 0 ? -1 : 1
-          positions.set(pools.related[index].number, {
-            cx: side * relatedX,
-            cy: bandTop + (GRAPH_NODE.h / 2) + row * (GRAPH_NODE.h + 14),
-            w: GRAPH_NODE.w,
-            h: GRAPH_NODE.h,
-            focus: false,
-          })
-        }
+        const relatedColumns = gridColumns(pools.related.length)
+        const relatedTop = Math.max(
+          (GRAPH_FOCUS.h / 2) + rowGap + childHeight + (pools.child.length > 0 ? 22 : 0),
+          stackSpan(pools.blocker.length) + 22,
+          stackSpan(pools.blocked.length) + 22,
+        )
+        if (pools.related.length > 0) placeGrid(pools.related, relatedTop, relatedColumns)
 
         let minX = Infinity
         let minY = Infinity
@@ -1782,7 +1791,9 @@ window.__ModuleLoader__.load({
             stroke: colour,
             markerEnd: 'url(#' + uid + '-' + (EDGE_COLOUR[edge.kind] ? edge.kind : 'relates') + ')',
           }),
-          h('text', {
+          // Plain "relates" edges would repeat the same word on every line;
+          // their kind is carried by colour and the legend instead.
+          edge.kind === 'relates' ? null : h('text', {
             className: 'gkb-edge-label',
             x: round1(edge.midX),
             y: round1(edge.midY - 5),
@@ -1801,10 +1812,10 @@ window.__ModuleLoader__.load({
           node.title !== '' ? node.title : badge,
           w - 22,
           node.focus ? 12 : 11,
-          2,
+          3,
         )
-        const titleStart = node.focus ? 6 : 10
-        const lineHeight = node.focus ? 14 : 13
+        const titleStart = 4
+        const lineHeight = node.focus ? 13 : 12
         const interactive = !node.focus && onSelectIssue !== null
         const rect = h('rect', {
           className: 'gkb-gnode-rect',
