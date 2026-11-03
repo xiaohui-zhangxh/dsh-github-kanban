@@ -274,6 +274,12 @@ function createJsonStorage() {
         bodies: bodies.map(([number, body]) => [number, clipStoredBody(body)]),
       })}\n`)
     },
+    loadRelation() {
+      return null
+    },
+    saveRelation() {
+      return false
+    },
     clearCache() {
       removeDiskCache()
     },
@@ -294,6 +300,7 @@ function createSqliteStorage(DatabaseSync) {
     CREATE TABLE IF NOT EXISTS cache_meta (repo TEXT PRIMARY KEY, fetched_at INTEGER NOT NULL, truncated INTEGER NOT NULL DEFAULT 0, login TEXT);
     CREATE TABLE IF NOT EXISTS issues (repo TEXT NOT NULL, number INTEGER NOT NULL, payload TEXT NOT NULL, PRIMARY KEY (repo, number));
     CREATE TABLE IF NOT EXISTS bodies (repo TEXT NOT NULL, number INTEGER NOT NULL, body TEXT NOT NULL, PRIMARY KEY (repo, number));
+    CREATE TABLE IF NOT EXISTS relations (repo TEXT NOT NULL, number INTEGER NOT NULL, payload TEXT NOT NULL, fetched_at INTEGER NOT NULL, PRIMARY KEY (repo, number));
   `)
   const statements = {
     metaAll: db.prepare('SELECT key, value FROM meta'),
@@ -315,6 +322,10 @@ function createSqliteStorage(DatabaseSync) {
     bodiesDeleteAll: db.prepare('DELETE FROM bodies'),
     bodyInsert: db.prepare('INSERT INTO bodies (repo, number, body) VALUES (?, ?, ?)'),
     bodySelect: db.prepare('SELECT number, body FROM bodies WHERE repo = ?'),
+    relationGet: db.prepare('SELECT payload, fetched_at FROM relations WHERE repo = ? AND number = ?'),
+    relationSet: db.prepare('INSERT INTO relations (repo, number, payload, fetched_at) VALUES (?, ?, ?, ?) ON CONFLICT(repo, number) DO UPDATE SET payload = excluded.payload, fetched_at = excluded.fetched_at'),
+    relationTrim: db.prepare('DELETE FROM relations WHERE repo = ? AND number NOT IN (SELECT number FROM relations WHERE repo = ? ORDER BY fetched_at DESC LIMIT 200)'),
+    relationsDeleteAll: db.prepare('DELETE FROM relations'),
   }
   const withTransaction = (work) => {
     db.exec('BEGIN IMMEDIATE')
@@ -462,12 +473,37 @@ function createSqliteStorage(DatabaseSync) {
         return false
       }
     },
+    loadRelation(repo, number) {
+      try {
+        const row = statements.relationGet.get(repo, number)
+        if (row === undefined) return null
+        const payload = JSON.parse(row.payload)
+        if (payload === null || typeof payload !== 'object') return null
+        return { payload, fetchedAt: Number(row.fetched_at) || 0 }
+      } catch (error) {
+        warn(`读取 SQLite 关系缓存失败：${describeError(error)}`)
+        return null
+      }
+    },
+    saveRelation(repo, number, payload, fetchedAt) {
+      try {
+        withTransaction(() => {
+          statements.relationSet.run(repo, number, JSON.stringify(payload), fetchedAt)
+          statements.relationTrim.run(repo, repo)
+        })
+        return true
+      } catch (error) {
+        warn(`写入 SQLite 关系缓存失败：${describeError(error)}`)
+        return false
+      }
+    },
     clearCache() {
       try {
         withTransaction(() => {
           statements.issuesDeleteAll.run()
           statements.bodiesDeleteAll.run()
           statements.cacheMetaDelete.run()
+          statements.relationsDeleteAll.run()
         })
       } catch (error) {
         warn(`清空 SQLite 缓存失败：${describeError(error)}`)
@@ -1113,15 +1149,52 @@ export function apply(ctx, config) {
     // keeps a short plain excerpt).
     return { ...graph, body: bodyExcerpt(focusBody, 20_000) }
   }
-  async function relationsFor(focusNumber) {
-    if (state.repo === '') throw new Error(NO_REPO_MESSAGE)
-    const key = `${state.repo}#${focusNumber}`
-    const cached = relationCache.get(key)
-    if (cached !== undefined && Date.now() - cached.at < RELATION_TTL_MS) return cached.payload
+  const relationInflight = new Map()
+  async function computeAndCacheRelations(repo, focusNumber) {
     await ensureBoard(STALE_WAIT_MS)
     const payload = await computeRelations(focusNumber)
-    relationCache.set(key, { at: Date.now(), payload })
+    if (repo !== state.repo) return payload
+    relationCache.set(`${repo}#${focusNumber}`, { at: Date.now(), payload })
+    storage.saveRelation(repo, focusNumber, payload, Date.now())
     return payload
+  }
+  function kickRelationRefresh(repo, focusNumber) {
+    const key = `${repo}#${focusNumber}`
+    if (relationInflight.has(key)) return
+    const task = computeAndCacheRelations(repo, focusNumber)
+      .catch((error) => {
+        void error
+      })
+      .finally(() => {
+        relationInflight.delete(key)
+      })
+    relationInflight.set(key, task)
+  }
+  async function relationsFor(focusNumber) {
+    if (state.repo === '') throw new Error(NO_REPO_MESSAGE)
+    const repo = state.repo
+    const key = `${repo}#${focusNumber}`
+    const memory = relationCache.get(key)
+    const persisted = memory === undefined ? storage.loadRelation(repo, focusNumber) : null
+    const cached = memory !== undefined
+      ? { at: memory.at, payload: memory.payload }
+      : (persisted === null ? null : { at: persisted.fetchedAt, payload: persisted.payload })
+    if (cached !== null) {
+      // Serve the cached graph immediately; a stale entry refreshes in the
+      // background and the client can follow up once it settled.
+      if (memory === undefined) relationCache.set(key, { at: cached.at, payload: cached.payload })
+      const stale = Date.now() - cached.at >= RELATION_TTL_MS
+      if (stale) kickRelationRefresh(repo, focusNumber)
+      return { ...cached.payload, stale, fetchedAt: cached.at }
+    }
+    const task = computeAndCacheRelations(repo, focusNumber)
+    relationInflight.set(key, task)
+    try {
+      const payload = await task
+      return { ...payload, stale: false, fetchedAt: Date.now() }
+    } finally {
+      relationInflight.delete(key)
+    }
   }
   function assignOperation(issueNumber, groupRef) {
     if (!Number.isInteger(issueNumber) || issueNumber <= 0) return failure('issue 编号不正确', 400)
@@ -1319,8 +1392,16 @@ export function apply(ctx, config) {
           }
           return
         }
-        await ensureBoard(BOARD_WAIT_MS)
-        sendJson(response, 200, boardPayload())
+        const usable = issueCache.repo === state.repo && issueCache.issues.length > 0
+        if (!usable) {
+          await refreshIssues()
+        } else if (Date.now() - issueCache.fetchedAt >= CACHE_TTL_MS && refreshTask === null) {
+          // Stale-while-revalidate: answer immediately from SQLite and let the
+          // incremental sync land in the background.
+          void refreshIssues()
+        }
+        const stale = usable && Date.now() - issueCache.fetchedAt >= CACHE_TTL_MS
+        sendJson(response, 200, { ...boardPayload(), stale, refreshing: refreshTask !== null })
         return
       }
       if (request.method !== 'POST') {

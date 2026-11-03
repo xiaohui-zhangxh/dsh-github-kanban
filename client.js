@@ -2039,33 +2039,47 @@ window.__ModuleLoader__.load({
           setGraphError(null)
         }
         setRevalidating(true)
-        requestJson(API + '?issue=' + encodeURIComponent(String(number)))
-          .then((data) => {
-            if (cancelled) return
-            const previous = cache.get(number)
-            const changed = previous === undefined || jsonChanged(previous.value, data)
-            cache.set(number, { at: Date.now(), value: data })
-            if (cache.size > 30) {
-              const oldest = cache.keys().next().value
-              if (oldest !== undefined && oldest !== number) cache.delete(oldest)
-            }
-            if (changed) setGraph(data)
-            setGraphLoading(false)
-            setRevalidating(false)
-            setGraphError(null)
-          })
-          .catch((reason) => {
-            if (cancelled) return
-            setRevalidating(false)
-            if (cache.get(number) === undefined) {
+        let timer = null
+        const request = (remaining) => {
+          requestJson(API + '?issue=' + encodeURIComponent(String(number)))
+            .then((data) => {
+              if (cancelled) return
+              const previous = cache.get(number)
+              const changed = previous === undefined || jsonChanged(previous.value, data)
+              cache.set(number, { at: Date.now(), value: data })
+              if (cache.size > 30) {
+                const oldest = cache.keys().next().value
+                if (oldest !== undefined && oldest !== number) cache.delete(oldest)
+              }
+              if (changed) setGraph(data)
+              setGraphError(null)
+              if (data !== null && data.stale === true && remaining > 0) {
+                // The Host served a persisted graph and is revalidating it in
+                // the background: check once more for the settled payload.
+                timer = setTimeout(() => {
+                  timer = null
+                  if (!cancelled) request(remaining - 1)
+                }, 1200)
+                return
+              }
               setGraphLoading(false)
-              setGraphError(errorMessage(reason, ''))
-            }
-            // With cached content the refresh failure is ignored: the panel
-            // keeps showing the last known relations.
-          })
+              setRevalidating(false)
+            })
+            .catch((reason) => {
+              if (cancelled) return
+              setRevalidating(false)
+              if (cache.get(number) === undefined) {
+                setGraphLoading(false)
+                setGraphError(errorMessage(reason, ''))
+              }
+              // With cached content the refresh failure is ignored: the panel
+              // keeps showing the last known relations.
+            })
+        }
+        request(3)
         return () => {
           cancelled = true
+          if (timer !== null) clearTimeout(timer)
         }
       }, [number, attempt, open])
 
@@ -2516,6 +2530,8 @@ window.__ModuleLoader__.load({
       const filterButtonRef = useRef(null)
       const filtersRepoRef = useRef('')
       const mountedRef = useRef(true)
+      const staleTimerRef = useRef(null)
+      const staleFollowupsRef = useRef(0)
 
       const applyData = useCallback((data) => {
         if (!data || typeof data !== 'object') return
@@ -2536,7 +2552,7 @@ window.__ModuleLoader__.load({
       const loadBoard = useCallback(async (mode) => {
         if (inFlightRef.current) return
         inFlightRef.current = true
-        if (mode !== 'poll') setRefreshing(true)
+        if (mode !== 'poll' && mode !== 'followup') setRefreshing(true)
         try {
           // Polling and manual refresh ask the Host to refetch from GitHub;
           // the first mount may reuse the Host's cache. Either way the result
@@ -2546,6 +2562,22 @@ window.__ModuleLoader__.load({
             : await getBoardSnapshot()
           applyData(data)
           setFetchError(null)
+          if (mode === 'initial') staleFollowupsRef.current = 0
+          if (staleTimerRef.current !== null) {
+            clearTimeout(staleTimerRef.current)
+            staleTimerRef.current = null
+          }
+          // The Host answers a stale board from SQLite and refreshes in the
+          // background; poll once more to pick the settled snapshot up.
+          if (data !== null && data.stale === true && mode !== 'refresh' && mode !== 'poll'
+            && staleFollowupsRef.current < 5) {
+            staleFollowupsRef.current += 1
+            staleTimerRef.current = setTimeout(() => {
+              staleTimerRef.current = null
+              if (!mountedRef.current || inFlightRef.current) return
+              void loadBoard('followup')
+            }, 1200)
+          }
         } catch (reason) {
           setFetchError(errorMessage(reason, ''))
         } finally {
@@ -2570,6 +2602,10 @@ window.__ModuleLoader__.load({
         return () => {
           mountedRef.current = false
           boardMounted = false
+          if (staleTimerRef.current !== null) {
+            clearTimeout(staleTimerRef.current)
+            staleTimerRef.current = null
+          }
         }
       }, [loadBoard])
 
