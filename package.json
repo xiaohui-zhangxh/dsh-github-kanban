@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-github-kanban",
-  "version": "1.8.0",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
   "description": "GitHub issue kanban board for DeepSeek Harness with DSH todo groups, drag-to-group, agent claim tools, and an animated issue relationship graph",

@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process'
+import { createRequire } from 'node:module'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -19,6 +20,8 @@ const OPEN_STATE_QUERY = 'state=open'
 const SCOPE_MINE = 'mine'
 const SCOPE_ALL = 'all'
 const FETCH_BUDGET_MS = 20_000
+const INCREMENTAL_OVERLAP_MS = 60_000
+const INCREMENTAL_PAGE_LIMIT = 5
 const STALE_WAIT_MS = 2_500
 const BOARD_WAIT_MS = 30_000
 const TOOL_WAIT_MS = 8_000
@@ -227,6 +230,273 @@ function removeDiskCache() {
     if (error === null || typeof error !== 'object' || error.code !== 'ENOENT') warn(`删除看板缓存失败（忽略）：${describeError(error)}`)
   }
 }
+const STORAGE_FILE = 'github-kanban.sqlite'
+const STORED_BODY_LIMIT = 100_000
+
+function clipStoredBody(value) {
+  if (typeof value !== 'string') return ''
+  return value.length > STORED_BODY_LIMIT ? value.slice(0, STORED_BODY_LIMIT) : value
+}
+
+function createJsonStorage() {
+  return {
+    kind: 'json',
+    file: cachePath(),
+    loadState() {
+      try {
+        return readStateFile().value
+      } catch (error) {
+        warn(`读取 JSON 状态失败：${describeError(error)}`)
+        return null
+      }
+    },
+    saveState(state) {
+      return writeStateFile(state)
+    },
+    loadCache(repo) {
+      try {
+        return readDiskCache(repo)
+      } catch (error) {
+        warn(`读取 JSON 缓存失败：${describeError(error)}`)
+        return null
+      }
+    },
+    saveCache(cache) {
+      if (cache === null || typeof cache !== 'object' || typeof cache.repo !== 'string' || Array.isArray(cache.issues) === false) return false
+      const bodies = cache.bodies instanceof Map ? [...cache.bodies.entries()] : []
+      return writeAtomic(cachePath(), `${JSON.stringify({
+        version: CACHE_VERSION,
+        repo: cache.repo,
+        fetchedAt: cache.fetchedAt,
+        issues: cache.issues,
+        truncated: cache.truncated,
+        login: cache.login ?? null,
+        bodies: bodies.map(([number, body]) => [number, clipStoredBody(body)]),
+      })}\n`)
+    },
+    clearCache() {
+      removeDiskCache()
+    },
+    close() {},
+  }
+}
+
+function createSqliteStorage(DatabaseSync) {
+  const file = path.join(profileDir(), STORAGE_FILE)
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  const db = new DatabaseSync(file)
+  db.exec('PRAGMA journal_mode = WAL')
+  db.exec('PRAGMA synchronous = NORMAL')
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS groups (id TEXT PRIMARY KEY, name TEXT NOT NULL, sort INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, issue_number INTEGER NOT NULL, group_id TEXT NOT NULL, repo TEXT NOT NULL, created_at INTEGER NOT NULL, claimed_at INTEGER, claimed_by TEXT);
+    CREATE TABLE IF NOT EXISTS cache_meta (repo TEXT PRIMARY KEY, fetched_at INTEGER NOT NULL, truncated INTEGER NOT NULL DEFAULT 0, login TEXT);
+    CREATE TABLE IF NOT EXISTS issues (repo TEXT NOT NULL, number INTEGER NOT NULL, payload TEXT NOT NULL, PRIMARY KEY (repo, number));
+    CREATE TABLE IF NOT EXISTS bodies (repo TEXT NOT NULL, number INTEGER NOT NULL, body TEXT NOT NULL, PRIMARY KEY (repo, number));
+  `)
+  const statements = {
+    metaAll: db.prepare('SELECT key, value FROM meta'),
+    metaSet: db.prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'),
+    groupDelete: db.prepare('DELETE FROM groups'),
+    taskDelete: db.prepare('DELETE FROM tasks'),
+    groupInsert: db.prepare('INSERT INTO groups (id, name, sort) VALUES (?, ?, ?)'),
+    taskInsert: db.prepare('INSERT INTO tasks (id, issue_number, group_id, repo, created_at, claimed_at, claimed_by) VALUES (?, ?, ?, ?, ?, ?, ?)'),
+    groupSelect: db.prepare('SELECT id, name, sort FROM groups ORDER BY sort'),
+    taskSelect: db.prepare('SELECT id, issue_number, group_id, repo, created_at, claimed_at, claimed_by FROM tasks'),
+    cacheMetaGet: db.prepare('SELECT repo, fetched_at, truncated, login FROM cache_meta WHERE repo = ?'),
+    cacheMetaSet: db.prepare('INSERT INTO cache_meta (repo, fetched_at, truncated, login) VALUES (?, ?, ?, ?) ON CONFLICT(repo) DO UPDATE SET fetched_at = excluded.fetched_at, truncated = excluded.truncated, login = excluded.login'),
+    cacheMetaDelete: db.prepare('DELETE FROM cache_meta'),
+    issuesDelete: db.prepare('DELETE FROM issues WHERE repo = ?'),
+    issuesDeleteAll: db.prepare('DELETE FROM issues'),
+    issueInsert: db.prepare('INSERT INTO issues (repo, number, payload) VALUES (?, ?, ?)'),
+    issueSelect: db.prepare('SELECT payload FROM issues WHERE repo = ?'),
+    bodiesDelete: db.prepare('DELETE FROM bodies WHERE repo = ?'),
+    bodiesDeleteAll: db.prepare('DELETE FROM bodies'),
+    bodyInsert: db.prepare('INSERT INTO bodies (repo, number, body) VALUES (?, ?, ?)'),
+    bodySelect: db.prepare('SELECT number, body FROM bodies WHERE repo = ?'),
+  }
+  const withTransaction = (work) => {
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      const result = work()
+      db.exec('COMMIT')
+      return result
+    } catch (error) {
+      try {
+        db.exec('ROLLBACK')
+      } catch (rollbackError) {
+        void rollbackError
+      }
+      throw error
+    }
+  }
+  const storage = {
+    kind: 'sqlite',
+    file,
+    loadState() {
+      try {
+        const meta = {}
+        for (const row of statements.metaAll.all()) meta[row.key] = row.value
+        if (Object.keys(meta).length === 0) {
+          // First activation on a legacy install: hand the JSON state to
+          // buildState; apply() persists the normalized result right after.
+          return readStateFile().value
+        }
+        const groups = statements.groupSelect.all().map((row) => ({
+          id: row.id,
+          name: row.name,
+          order: Number(row.sort) || 0,
+        }))
+        const tasks = statements.taskSelect.all().map((row) => ({
+          id: row.id,
+          issueNumber: Number(row.issue_number),
+          groupId: row.group_id,
+          repo: row.repo,
+          createdAt: Number(row.created_at) || 0,
+          claimedAt: row.claimed_at === null ? null : Number(row.claimed_at),
+          claimedBy: row.claimed_by === null ? null : row.claimed_by,
+        }))
+        return {
+          version: Number(meta.state_version) || STATE_VERSION,
+          repo: typeof meta.repo === 'string' ? meta.repo : '',
+          scope: normalizeScope(meta.scope) ?? SCOPE_MINE,
+          activeSessionId: typeof meta.active_session_id === 'string' && meta.active_session_id !== '' ? meta.active_session_id : null,
+          groups,
+          tasks,
+        }
+      } catch (error) {
+        warn(`读取 SQLite 状态失败：${describeError(error)}`)
+        return null
+      }
+    },
+    saveState(state) {
+      if (state === null || typeof state !== 'object') return false
+      try {
+        withTransaction(() => {
+          statements.groupDelete.run()
+          statements.taskDelete.run()
+          statements.metaSet.run('repo', state.repo ?? '')
+          statements.metaSet.run('scope', state.scope ?? SCOPE_MINE)
+          statements.metaSet.run('active_session_id', state.activeSessionId ?? '')
+          statements.metaSet.run('state_version', String(STATE_VERSION))
+          for (const group of Array.isArray(state.groups) ? state.groups : []) {
+            statements.groupInsert.run(group.id, group.name, group.order ?? 0)
+          }
+          for (const task of Array.isArray(state.tasks) ? state.tasks : []) {
+            statements.taskInsert.run(
+              task.id,
+              task.issueNumber,
+              task.groupId,
+              task.repo ?? state.repo ?? '',
+              task.createdAt ?? 0,
+              task.claimedAt ?? null,
+              task.claimedBy ?? null,
+            )
+          }
+        })
+        return true
+      } catch (error) {
+        warn(`写入 SQLite 状态失败：${describeError(error)}`)
+        return false
+      }
+    },
+    loadCache(repo) {
+      try {
+        const meta = statements.cacheMetaGet.get(repo)
+        if (meta === undefined) {
+          const legacy = readDiskCache(repo)
+          if (legacy !== null) storage.saveCache(legacy)
+          return legacy
+        }
+        const issues = []
+        for (const row of statements.issueSelect.all(repo)) {
+          try {
+            const parsed = JSON.parse(row.payload)
+            if (parsed !== null && typeof parsed === 'object') issues.push(parsed)
+          } catch (parseError) {
+            void parseError
+          }
+        }
+        if (issues.length === 0) return null
+        const bodies = new Map()
+        for (const row of statements.bodySelect.all(repo)) bodies.set(Number(row.number), row.body)
+        return {
+          repo,
+          fetchedAt: Number(meta.fetched_at) || 0,
+          issues,
+          bodies,
+          truncated: Number(meta.truncated) === 1,
+          error: null,
+          login: typeof meta.login === 'string' && meta.login !== '' ? meta.login : null,
+        }
+      } catch (error) {
+        warn(`读取 SQLite 缓存失败：${describeError(error)}`)
+        return null
+      }
+    },
+    saveCache(cache) {
+      if (cache === null || typeof cache !== 'object' || typeof cache.repo !== 'string' || Array.isArray(cache.issues) === false) return false
+      try {
+        withTransaction(() => {
+          statements.issuesDelete.run(cache.repo)
+          statements.bodiesDelete.run(cache.repo)
+          for (const issue of cache.issues) {
+            statements.issueInsert.run(cache.repo, issue.number, JSON.stringify(issue))
+          }
+          if (cache.bodies instanceof Map) {
+            for (const [number, body] of cache.bodies.entries()) {
+              statements.bodyInsert.run(cache.repo, Number(number), clipStoredBody(body))
+            }
+          }
+          statements.cacheMetaSet.run(
+            cache.repo,
+            cache.fetchedAt ?? Date.now(),
+            cache.truncated === true ? 1 : 0,
+            cache.login ?? null,
+          )
+        })
+        return true
+      } catch (error) {
+        warn(`写入 SQLite 缓存失败：${describeError(error)}`)
+        return false
+      }
+    },
+    clearCache() {
+      try {
+        withTransaction(() => {
+          statements.issuesDeleteAll.run()
+          statements.bodiesDeleteAll.run()
+          statements.cacheMetaDelete.run()
+        })
+      } catch (error) {
+        warn(`清空 SQLite 缓存失败：${describeError(error)}`)
+      }
+    },
+    close() {
+      try {
+        db.close()
+      } catch (error) {
+        void error
+      }
+    },
+  }
+  return storage
+}
+
+function createStorage() {
+  try {
+    fs.mkdirSync(profileDir(), { recursive: true })
+    const require = createRequire(import.meta.url)
+    const sqlite = require('node:sqlite')
+    if (typeof sqlite.DatabaseSync !== 'function') throw new Error('node:sqlite DatabaseSync 不可用')
+    return createSqliteStorage(sqlite.DatabaseSync)
+  } catch (error) {
+    warn(`SQLite 存储不可用，退回 JSON 文件：${describeError(error)}`)
+    return createJsonStorage()
+  }
+}
+
 function isExecutable(file) {
   try {
     fs.accessSync(file, fs.constants.X_OK)
@@ -350,6 +620,31 @@ async function fetchIssues(repo, limit, bodies) {
       break
     }
   }
+  return { issues, truncated }
+}
+async function fetchIssueDeltas(repo, since, bodies) {
+  const startedAt = Date.now()
+  const issues = []
+  let truncated = false
+  let page = 1
+  while (page <= INCREMENTAL_PAGE_LIMIT) {
+    const raw = await ghJson(['api', `repos/${repo}/issues?state=all&since=${encodeURIComponent(since)}&per_page=100&sort=updated&direction=asc&page=${page}`])
+    if (!Array.isArray(raw)) throw new Error('GitHub 返回的增量 issue 列表格式不正确')
+    for (const item of raw) {
+      if (item === null || typeof item !== 'object' || item.pull_request !== undefined) continue
+      const issue = normalizeIssue(item, repo)
+      if (issue === null) continue
+      issues.push(issue)
+      if (typeof item.body === 'string' && item.body !== '') bodies.set(issue.number, item.body)
+    }
+    if (raw.length < 100) break
+    if (Date.now() - startedAt > FETCH_BUDGET_MS) {
+      truncated = true
+      break
+    }
+    page += 1
+  }
+  if (page > INCREMENTAL_PAGE_LIMIT) truncated = true
   return { issues, truncated }
 }
 function nodeFromRaw(raw, repo) {
@@ -517,17 +812,25 @@ export function apply(ctx, config) {
   }
   const fallbackRepo = normalizeRepo(config?.repo) ?? DEFAULT_REPO
   const issuesLimit = clampInt(config?.issuesLimit, 50, 1000, 300)
-  const loaded = readStateFile()
-  if (loaded.error !== null) warn(`读取看板状态失败，使用默认分组：${describeError(loaded.error)}`)
+  const storage = createStorage()
+  ctx.effect(() => () => {
+    try {
+      storage.close()
+    } catch (error) {
+      void error
+    }
+  }, 'github-kanban: storage')
+  const loaded = { value: storage.loadState(), error: null }
   const state = buildState(loaded.value, fallbackRepo, normalizeScope(config?.scope) ?? SCOPE_MINE)
-  // Persist the default-group migration once so the new four columns survive
-  // the next load even if the user changes nothing else.
-  if (loaded.value !== null && Number(loaded.value.version ?? 1) < STATE_VERSION) writeStateFile(state)
-  let issueCache = readDiskCache(state.repo) ?? emptyCache(state.repo)
+  // Persist on every activation: the store (SQLite, or the JSON fallback) is
+  // the single source for groups/tasks, so schema migrations land immediately.
+  storage.saveState(state)
+  let issueCache = storage.loadCache(state.repo) ?? emptyCache(state.repo)
   let viewerLoginCache = { login: null, at: 0 }
   const relationCache = new Map()
   const sessionRepoCache = new Map()
   let refreshTask = null
+  let lastSyncState = { mode: 'none', since: null }
   let webServer
   function webOrigin() {
     try {
@@ -616,14 +919,14 @@ export function apply(ctx, config) {
     const nextSessionId = sessionId.trim()
     if (nextSessionId === state.activeSessionId) return { changed: false, repo: state.repo, switched: false }
     state.activeSessionId = nextSessionId
-    writeStateFile(state)
+    storage.saveState(state)
     const repo = await resolveRepoOfSession(nextSessionId)
     if (repo === null || repo === state.repo) return { changed: true, repo: state.repo, switched: false }
     state.repo = repo
-    writeStateFile(state)
+    storage.saveState(state)
     issueCache = emptyCache(repo)
     relationCache.clear()
-    removeDiskCache()
+    storage.clearCache()
     // Kick the new project's fetch; a board GET arriving now shares this
     // promise, so the first render after the switch already shows the new repo.
     void refreshIssues()
@@ -653,26 +956,45 @@ export function apply(ctx, config) {
     return cached.filter((issue) => issue.mine === true)
   }
   async function doRefresh(repo) {
-    const bodies = new Map()
-    const fetched = await fetchIssues(repo, issuesLimit, bodies)
+    const syncStartedAt = Date.now()
+    const previous = issueCache.repo === repo ? issueCache : (storage.loadCache(repo) ?? emptyCache(repo))
+    // First sync for a repository is a full open-issue fetch; every later sync
+    // asks GitHub only for issues changed since the previous run (`since`),
+    // reusing the SQLite rows for everything else.
+    const since = previous.fetchedAt > 0
+      ? new Date(previous.fetchedAt - INCREMENTAL_OVERLAP_MS).toISOString()
+      : null
+    const bodies = new Map(previous.bodies)
     const login = await viewerLogin().catch(() => null)
+    const merged = new Map()
+    let truncated = false
+    if (since === null) {
+      const fetched = await fetchIssues(repo, issuesLimit, bodies)
+      truncated = fetched.truncated
+      for (const issue of fetched.issues) merged.set(issue.number, issue)
+    } else {
+      const changed = await fetchIssueDeltas(repo, since, bodies)
+      truncated = changed.truncated
+      for (const issue of previous.issues) merged.set(issue.number, issue)
+      for (const issue of changed.issues) {
+        if (issue.state === 'CLOSED') {
+          merged.delete(issue.number)
+          bodies.delete(issue.number)
+        } else {
+          merged.set(issue.number, issue)
+        }
+      }
+    }
     // A fetch that finishes after the board switched projects must not
     // overwrite the new project's snapshot or its disk cache.
     if (repo !== state.repo) return issueCache
-    const issues = login === null
-      ? fetched.issues
-      : fetched.issues.map((issue) => ({ ...issue, mine: issue.author === login || issue.assignees.includes(login) }))
-    issueCache = { repo, fetchedAt: Date.now(), issues, bodies, truncated: fetched.truncated, error: null, login }
+    const issues = [...merged.values()].map((issue) => (login === null
+      ? issue
+      : { ...issue, mine: issue.author === login || issue.assignees.includes(login) }))
+    issueCache = { repo, fetchedAt: syncStartedAt, issues, bodies, truncated, error: null, login }
+    lastSyncState = { mode: since === null ? 'full' : 'incremental', since }
     relationCache.clear()
-    writeAtomic(cachePath(), `${JSON.stringify({
-      version: CACHE_VERSION,
-      repo,
-      fetchedAt: issueCache.fetchedAt,
-      issues: issueCache.issues,
-      truncated: issueCache.truncated,
-      login,
-      bodies: [...bodies.entries()].map(([number, body]) => [number, bodyExcerpt(body, 100_000)]),
-    })}\n`)
+    storage.saveCache(issueCache)
     return issueCache
   }
   const NO_REPO_MESSAGE = '尚未选择仓库：点击看板顶部的仓库名输入 owner/name，或在插件配置里设置 repo；从带 GitHub 关联的聊天项目进入会自动识别'
@@ -712,7 +1034,7 @@ export function apply(ctx, config) {
     await Promise.race([refreshIssues(), delay(waitMs)])
   }
   function boardPayload() {
-    return { repo: state.repo, scope: state.scope, fetchedAt: issueCache.fetchedAt, error: issueCache.error, issues: visibleIssues(), truncated: issueCache.truncated, groups: state.groups, tasks: currentTasks() }
+    return { repo: state.repo, scope: state.scope, storage: storage.kind, sync: lastSyncState, fetchedAt: issueCache.fetchedAt, error: issueCache.error, issues: visibleIssues(), truncated: issueCache.truncated, groups: state.groups, tasks: currentTasks() }
   }
   async function issueSnapshot(issueNumber) {
     const cached = issueCache.repo === state.repo ? issueCache.issues.find((issue) => issue.number === issueNumber) : undefined
@@ -812,7 +1134,7 @@ export function apply(ctx, config) {
     } else {
       task.groupId = group.id
     }
-    writeStateFile(state)
+    storage.saveState(state)
     return success({ task, group: { id: group.id, name: group.name } })
   }
   function moveOperation(taskId, groupRef) {
@@ -823,7 +1145,7 @@ export function apply(ctx, config) {
     const group = findGroupRef(groupRef)
     if (group === undefined) return failure('分组不存在', 404)
     task.groupId = group.id
-    writeStateFile(state)
+    storage.saveState(state)
     return success({ task })
   }
   function removeOperation(taskId) {
@@ -833,7 +1155,7 @@ export function apply(ctx, config) {
     if (task === undefined) return failure('任务不存在', 404)
     const index = state.tasks.indexOf(task)
     if (index !== -1) state.tasks.splice(index, 1)
-    writeStateFile(state)
+    storage.saveState(state)
     return success({ task, taskId: task.id })
   }
   function addGroupOperation(name) {
@@ -843,7 +1165,7 @@ export function apply(ctx, config) {
     if (state.groups.some((group) => group.name === groupName)) return failure('已存在同名分组', 409)
     const group = { id: createId('g_'), name: groupName, order: state.groups.reduce((maximum, item) => Math.max(maximum, item.order), -1) + 1 }
     state.groups.push(group)
-    writeStateFile(state)
+    storage.saveState(state)
     return success({ group })
   }
   function renameGroupOperation(groupId, name) {
@@ -854,7 +1176,7 @@ export function apply(ctx, config) {
     if (groupName.length > 40) return failure('分组名称最多 40 个字符', 400)
     if (state.groups.some((other) => other.id !== group.id && other.name === groupName)) return failure('已存在同名分组', 409)
     group.name = groupName
-    writeStateFile(state)
+    storage.saveState(state)
     return success({ group })
   }
   function deleteGroupOperation(groupId) {
@@ -868,7 +1190,7 @@ export function apply(ctx, config) {
       task.groupId = state.groups[0].id
       moved += 1
     }
-    writeStateFile(state)
+    storage.saveState(state)
     return success({ removed: { id: removed.id, name: removed.name }, moved })
   }
   function claimOperation(input) {
@@ -899,7 +1221,7 @@ export function apply(ctx, config) {
     task.claimedBy = input.by === 'user' ? 'user' : 'agent'
     const doing = specialGroup('doing')
     if (doing !== undefined) task.groupId = doing.id
-    writeStateFile(state)
+    storage.saveState(state)
     return success({ task, alreadyClaimed: false })
   }
   function completeOperation(taskId) {
@@ -913,14 +1235,14 @@ export function apply(ctx, config) {
       task.claimedAt = Date.now()
       task.claimedBy = 'user'
     }
-    writeStateFile(state)
+    storage.saveState(state)
     return success({ task })
   }
   function scopeOperation(scope) {
     const next = normalizeScope(scope)
     if (next === null) return failure('scope 必须是 mine 或 all', 400)
     state.scope = next
-    writeStateFile(state)
+    storage.saveState(state)
     return { board: true }
   }
   function replyOutcome(response, outcome) {
@@ -949,10 +1271,10 @@ export function apply(ctx, config) {
       const repo = normalizeRepo(body.repo)
       if (repo === null) return failure('仓库格式不正确，应为 owner/name', 400)
       state.repo = repo
-      writeStateFile(state)
+      storage.saveState(state)
       issueCache = emptyCache(repo)
       relationCache.clear()
-      removeDiskCache()
+      storage.clearCache()
       await refreshIssues()
       return { board: true }
     },
@@ -980,7 +1302,7 @@ export function apply(ctx, config) {
           const count = cached.repo === state.repo ? visibleIssues().length : 0
           const loading = count === 0 && cached.error === null
           if (loading) void refreshIssues()
-          sendJson(response, 200, { repo: state.repo, scope: state.scope, count, fetchedAt: cached.fetchedAt, error: cached.error, loading })
+          sendJson(response, 200, { repo: state.repo, scope: state.scope, storage: storage.kind, count, fetchedAt: cached.fetchedAt, error: cached.error, loading })
           return
         }
         const issueToken = url.searchParams.get('issue')
