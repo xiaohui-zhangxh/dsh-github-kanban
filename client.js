@@ -69,6 +69,7 @@ window.__ModuleLoader__.load({
       'detail.shrink': '缩小还原',
       'detail.zoomHint': '上层放大显示；点击节点可切换 issue',
       'detail.loadingIssue': '正在读取 issue…',
+      'detail.revalidating': '正在检查更新…',
       'detail.truncated': '关联过多，仅显示部分邻居。',
       'detail.graphError': '关联关系加载失败',
       'detail.added': '已加入分组',
@@ -155,6 +156,7 @@ window.__ModuleLoader__.load({
       'detail.shrink': 'Restore',
       'detail.zoomHint': 'Shown enlarged above the board; click a node to switch issues',
       'detail.loadingIssue': 'Loading issue…',
+      'detail.revalidating': 'Checking for updates…',
       'detail.truncated': 'Too many relations; only some neighbours are shown.',
       'detail.graphError': 'Failed to load relationships',
       'detail.added': 'Added to the group',
@@ -419,6 +421,7 @@ window.__ModuleLoader__.load({
       .gkb-rel-zoom-mask { border-radius: 10px; }
       .gkb-spinner { width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--dsw-alias-border-l2);
         border-top-color: var(--dsw-alias-brand-primary); animation: gkb-spin .8s linear infinite; }
+      .gkb-spinner-sm { flex: none; width: 12px; height: 12px; border-width: 1.5px; }
       @keyframes gkb-spin { to { transform: rotate(360deg); } }
       .gkb-detail-title { margin: 0; font-size: 14px; line-height: 20px; font-weight: 600;
         word-break: break-word; }
@@ -858,6 +861,14 @@ window.__ModuleLoader__.load({
     }
 
     const GRAPH_BASE_WIDTH = 620
+
+    function jsonChanged(previous, next) {
+      try {
+        return JSON.stringify(previous) !== JSON.stringify(next)
+      } catch (reason) {
+        return true
+      }
+    }
 
     function graphScaleForWidth(width) {
       if (typeof width !== 'number' || Number.isFinite(width) === false || width <= 0) return 1
@@ -1913,16 +1924,17 @@ window.__ModuleLoader__.load({
             rx: 1.5 * scale,
             fill: mark.color,
           })
+        const titleX = -w / 2 + 10 * scale
         const titleText = lines.length > 0
           ? h('text', {
             className: 'gkb-gnode-title',
-            x: 0,
+            x: titleX,
             y: 0,
-            textAnchor: 'middle',
+            textAnchor: 'start',
             style: { fontSize: (node.focus ? 11.5 : 10.5) * scale + 'px' },
           }, lines.map((line, index) => h('tspan', {
             key: index,
-            x: 0,
+            x: titleX,
             dy: index === 0 ? titleStart : lineHeight,
           }, line)))
           : null
@@ -1987,6 +1999,7 @@ window.__ModuleLoader__.load({
 
       const [graph, setGraph] = useState(null)
       const [graphLoading, setGraphLoading] = useState(false)
+      const [revalidating, setRevalidating] = useState(false)
       const [graphError, setGraphError] = useState(null)
       const [attempt, setAttempt] = useState(0)
       const [groupChoice, setGroupChoice] = useState('')
@@ -2006,37 +2019,55 @@ window.__ModuleLoader__.load({
         if (number === null) {
           setGraph(null)
           setGraphLoading(false)
+          setRevalidating(false)
           setGraphError(null)
           return undefined
         }
+        if (open !== true) return undefined
+        let cancelled = false
         const cache = cacheRef.current
         const hit = cache.get(number)
-        if (hit && Date.now() - hit.at < 60000) {
+        if (hit !== undefined) {
+          // Cache first: render what we already have, then revalidate in the
+          // background and only replace the view when the payload changed.
           setGraph(hit.value)
           setGraphLoading(false)
           setGraphError(null)
-          return undefined
+        } else {
+          setGraph(null)
+          setGraphLoading(true)
+          setGraphError(null)
         }
-        let cancelled = false
-        setGraphLoading(true)
-        setGraphError(null)
-        setGraph(null)
+        setRevalidating(true)
         requestJson(API + '?issue=' + encodeURIComponent(String(number)))
           .then((data) => {
             if (cancelled) return
+            const previous = cache.get(number)
+            const changed = previous === undefined || jsonChanged(previous.value, data)
             cache.set(number, { at: Date.now(), value: data })
-            setGraph(data)
+            if (cache.size > 30) {
+              const oldest = cache.keys().next().value
+              if (oldest !== undefined && oldest !== number) cache.delete(oldest)
+            }
+            if (changed) setGraph(data)
             setGraphLoading(false)
+            setRevalidating(false)
+            setGraphError(null)
           })
           .catch((reason) => {
             if (cancelled) return
-            setGraphError(errorMessage(reason, ''))
-            setGraphLoading(false)
+            setRevalidating(false)
+            if (cache.get(number) === undefined) {
+              setGraphLoading(false)
+              setGraphError(errorMessage(reason, ''))
+            }
+            // With cached content the refresh failure is ignored: the panel
+            // keeps showing the last known relations.
           })
         return () => {
           cancelled = true
         }
-      }, [number, attempt])
+      }, [number, attempt, open])
 
       const taskGroupId = task !== null && typeof task.groupId === 'string' ? task.groupId : ''
 
@@ -2305,6 +2336,14 @@ window.__ModuleLoader__.load({
               h('span', { className: 'gkb-rel-zoom-title' }, (number === null ? '' : '#' + number + ' ') + t('detail.relations')),
               h('span', { className: 'gkb-rel-zoom-hint' }, t('detail.zoomHint')),
               h('span', { className: 'gkb-spacer' }),
+              revalidating
+                ? h('span', {
+                  className: 'gkb-spinner gkb-spinner-sm',
+                  role: 'status',
+                  title: t('detail.revalidating'),
+                  'aria-label': t('detail.revalidating'),
+                })
+                : null,
               h(IconButton, {
                 icon: 'collapse',
                 label: t('detail.shrink'),
@@ -2419,6 +2458,14 @@ window.__ModuleLoader__.load({
           number !== null
             ? h('span', { className: 'gkb-pill', 'data-state': state }, stateLabel(t, state))
             : null),
+        revalidating
+          ? h('span', {
+            className: 'gkb-spinner gkb-spinner-sm',
+            role: 'status',
+            title: t('detail.revalidating'),
+            'aria-label': t('detail.revalidating'),
+          })
+          : null,
         h(IconButton, {
           icon: 'close',
           label: t('detail.close'),
